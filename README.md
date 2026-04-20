@@ -6,6 +6,7 @@ Pueblo Lindo es un MVP de triage para Customer Success: recibe mensajes de Whats
 
 - Web desplegada: https://pueblo-lindo.vercel.app
 - Numero de WhatsApp para probar al agente: +1 (201) 331-5463
+- Link directo de prueba por WhatsApp: https://api.whatsapp.com/send?phone=12013315463&text=Hola!
 - Nota sobre Gemini: si te aparece un mensaje indicando que Gemini no responde, normalmente es por limites de free tier. Puedes escribirme y cambio la API key rapidamente para continuar la prueba.
 
 ## 4 flujos sugeridos para probar por WhatsApp

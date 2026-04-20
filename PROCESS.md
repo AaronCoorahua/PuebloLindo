@@ -52,5 +52,22 @@ Si tuviera una semana adicional, priorizaria:
 2. Implementar handoffs y notificaciones cuando se crea un ticket:
 	- Correo automatico por area responsable.
 	- Mensaje de WhatsApp a numeros encargados por area.
+	- Si el agente no puede asignar con certeza a un area operativa, crear el ticket en "otros" para revision humana y reasignacion posterior.
 3. Profundizar en el analisis de areas especificas del marketplace para mejorar el prompt del agente, reducir falsos positivos y elevar precision de clasificacion.
+
+### 4) Puntos adicionales (opcional)
+
+1. Deteccion de incertidumbre y escalamiento a humano:
+	- El flujo evita decisiones forzadas cuando no hay evidencia suficiente.
+	- Si no se puede resolver con certeza por area, el ticket se enruta a "otros" y queda listo para handoff humano.
+
+2. Control de alucinacion y verificacion de informacion:
+	- Se uso tipado estricto (schemas) y tools deterministas para limitar decisiones a datos disponibles.
+	- La logica de negocio exige campos minimos por area y confirmacion explicita antes de crear ticket.
+	- Verificacion aplicada: pruebas manuales por pasos (mensaje ambiguo -> pide faltantes; mensaje completo + SI -> crea ticket) para validar que el sistema no inventa datos no provistos.
+
+3. Escalabilidad propuesta para crecimiento 10x:
+	- Incorporar colas con AWS SQS para desacoplar recepcion de webhooks, procesamiento de agente y notificaciones.
+	- Mantener frontend y backend en Vercel o Amplify (modelo serverless tipo lambdas) para escalar horizontalmente por demanda.
+	- En backend, desacoplar la llamada al LLM del request principal (procesamiento async/worker) y fortalecer concurrencia con asyncio para mejorar throughput y resiliencia.
 
