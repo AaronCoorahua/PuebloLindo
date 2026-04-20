@@ -34,16 +34,7 @@ def _ticket_to_out(ticket: TicketModel) -> TicketOut:
 
 
 def _ticket_from_dict(row: dict[str, Any]) -> TicketModel:
-    return TicketModel(
-        id=UUID(row["id"]),
-        user_phone=row["user_phone"],
-        status=row["status"],
-        area=row.get("area") or "otros",
-        summary=row.get("summary") or "",
-        created_at=datetime.fromisoformat(row["created_at"]),
-        updated_at=datetime.fromisoformat(row["updated_at"]),
-        last_activity_at=datetime.fromisoformat(row.get("last_activity_at") or row["updated_at"]),
-    )
+    return TicketModel.from_row(row)
 
 
 def _get_ticket_by_phone_with_status(user_phone: str, status: str) -> TicketModel | None:
