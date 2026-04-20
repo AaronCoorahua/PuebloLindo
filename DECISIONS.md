@@ -215,6 +215,8 @@ Esto reduce riesgo y permite escalar con mayor confiabilidad.
   - Gmail.
 - Evaluar herramientas como:
   - Resend (automatización de emails).
+- Agregar interacciones de Human in the loop.
+- Evaluar automatizar resolución de tickets.
 
 ---
 
@@ -229,19 +231,7 @@ Esto reduce riesgo y permite escalar con mayor confiabilidad.
 
 - Validación estricta (schema).
 - Reglas de negocio.
-- Fallback a humano.
-
----
-
-## 6. Escalabilidad
-
-Si el sistema crece 10x:
-
-- workers asíncronos,
-- colas de procesamiento,
-- métricas (SLA, accuracy),
-- human-in-the-loop feedback,
-- detección automática de FAQs.
+- Fallback a categoría "Otros" en tickets.
 
 ---
 

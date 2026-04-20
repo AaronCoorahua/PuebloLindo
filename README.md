@@ -74,6 +74,14 @@ Resultado esperado:
 - Canal: Kapso (WhatsApp).
 - LLM: Gemini (con fallback de modelo).
 
+## Links utiles de herramientas
+
+- Supabase: https://supabase.com
+- Supabase Docs: https://supabase.com/docs
+- Kapso: https://www.kapso.ai
+- Vercel: https://vercel.com
+- Vercel Docs: https://vercel.com/docs
+
 ## Levantar el proyecto en local (paso a paso)
 
 ### 1) Requisitos
@@ -125,7 +133,7 @@ KAPSO_BASE_URL=https://api.kapso.ai/meta/whatsapp/v24.0
 KAPSO_API_KEY=
 KAPSO_PHONE_NUMBER_ID=
 KAPSO_SEND_PATH=/{phone_number_id}/messages
-KAPSO_MOCK_MODE=true
+KAPSO_MOCK_MODE=true 
 
 GEMINI_API_KEY=<tu_api_key_gemini>
 GEMINI_MODEL_PRIMARY=gemini-3.1-flash-lite-preview
