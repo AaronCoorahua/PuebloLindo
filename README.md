@@ -207,6 +207,10 @@ URL de webhook del proyecto:
 
 - POST /api/v1/webhooks/whatsapp
 
+Nota operativa:
+
+- El webhook de Kapso usa un debounce de 10 segundos para evitar respuestas duplicadas ante eventos repetidos en un intervalo corto.
+
 Ejemplos:
 
 - Produccion: https://<tu-backend>/api/v1/webhooks/whatsapp
