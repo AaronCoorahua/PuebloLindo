@@ -639,6 +639,14 @@ def _is_out_of_scope_consultation(message: str) -> bool:
     if not compact:
         return False
 
+    explicit_area_signals = (
+        "soporte tecnico",
+        "soporte",
+        "pagos",
+        "envios",
+        "reclamos",
+        "ventas",
+    )
     marketplace_scope_signals = (
         "marketplace",
         "plataforma",
@@ -665,7 +673,9 @@ def _is_out_of_scope_consultation(message: str) -> bool:
         "devolucion",
         "ticket",
     )
-    has_marketplace_scope = any(signal in compact for signal in marketplace_scope_signals)
+    has_marketplace_scope = any(signal in compact for signal in marketplace_scope_signals) or any(
+        signal in compact for signal in explicit_area_signals
+    )
 
     marketplace_incident_signals = (
         "no puedo",
@@ -772,7 +782,7 @@ def _build_out_of_scope_reply() -> str:
         "Gracias por escribirnos. No puedo ayudar con esa consulta. "
         "Soy Pueblo Agent y solo gestiono incidencias operativas de Pueblo Lindo "
         "para derivarlas al area correcta. "
-        "Si tienes un problema con pagos, envios, pedidos, cuenta o reclamos del marketplace, "
+        "Si tienes un problema con soporte tecnico, pagos, envios, pedidos, cuenta o reclamos del marketplace, "
         "cuentamelo y te ayudo de inmediato."
     )
 
