@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
 import json
 import logging
 import re
@@ -30,6 +32,64 @@ RECENT_MESSAGES_LIMIT = 20
 MAX_OPEN_TICKETS = 5
 WAITING_MESSAGE_GENERIC = "Gracias por escribirnos. Estamos revisando tu caso y te respondemos enseguida."
 LLM_UNAVAILABLE_MESSAGE = "Gemini no está disponible en este momento. Intentalo de nuevo más tarde"
+INTAKE_SESSION_TTL_MINUTES = 30
+
+
+@dataclass(slots=True)
+class IntakeSession:
+    area: str
+    summary_seed: str
+    slot_values: dict[str, str] = field(default_factory=dict)
+    collected_text: str = ""
+    awaiting_confirmation: bool = False
+    updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+INTAKE_SESSIONS: dict[str, IntakeSession] = {}
+
+AREA_INTAKE_RULES: dict[str, dict[str, Any]] = {
+    "soporte_tecnico": {
+        "required": ("detail", "channel", "error_context"),
+        "mandatory": ("detail", "channel"),
+        "threshold": 0.67,
+    },
+    "pagos": {
+        "required": ("detail", "reference", "payment_method"),
+        "mandatory": ("detail", "reference"),
+        "threshold": 0.67,
+    },
+    "envios": {
+        "required": ("detail", "reference", "shipping_context"),
+        "mandatory": ("detail", "reference"),
+        "threshold": 0.67,
+    },
+    "reclamos": {
+        "required": ("detail", "reference", "impact"),
+        "mandatory": ("detail",),
+        "threshold": 0.67,
+    },
+    "ventas": {
+        "required": ("detail", "reference", "user_role"),
+        "mandatory": ("detail", "reference"),
+        "threshold": 0.67,
+    },
+    "otros": {
+        "required": ("detail", "reference"),
+        "mandatory": ("detail",),
+        "threshold": 0.5,
+    },
+}
+
+INTAKE_SLOT_LABELS = {
+    "detail": "Detalle del problema",
+    "reference": "ID o referencia (pedido/transaccion/publicacion)",
+    "payment_method": "Metodo de pago",
+    "shipping_context": "Dato de envio (tracking/courier/direccion)",
+    "channel": "Canal o modulo donde falla (app/web/login/checkout)",
+    "error_context": "Mensaje de error o contexto tecnico",
+    "impact": "Impacto del problema",
+    "user_role": "Rol del usuario (comprador/artesano)",
+}
 
 BASE_PROMPT = """Eres Pueblo Agent, agente de triage de PuebloLindo.
 PuebloLindo es un marketplace que conecta artesanos rurales de Latinoamerica con compradores de todo el mundo.
@@ -69,6 +129,359 @@ Responde SOLO con JSON valido en esta forma:
 
 def build_waiting_message() -> str:
     return WAITING_MESSAGE_GENERIC
+
+
+def _now_utc() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _cleanup_intake_sessions() -> None:
+    now = _now_utc()
+    ttl = timedelta(minutes=INTAKE_SESSION_TTL_MINUTES)
+    expired_phones = [
+        phone
+        for phone, session in INTAKE_SESSIONS.items()
+        if now - session.updated_at > ttl
+    ]
+    for phone in expired_phones:
+        INTAKE_SESSIONS.pop(phone, None)
+
+
+def _get_intake_session(phone: str) -> IntakeSession | None:
+    _cleanup_intake_sessions()
+    return INTAKE_SESSIONS.get(phone)
+
+
+def _upsert_intake_session(phone: str, session: IntakeSession) -> None:
+    session.updated_at = _now_utc()
+    INTAKE_SESSIONS[phone] = session
+
+
+def _clear_intake_session(phone: str) -> None:
+    INTAKE_SESSIONS.pop(phone, None)
+
+
+def _intake_rule_for_area(area: str) -> dict[str, Any]:
+    return AREA_INTAKE_RULES.get(area, AREA_INTAKE_RULES["otros"])
+
+
+def _shorten(text: str, max_len: int = 180) -> str:
+    cleaned = " ".join(text.split())
+    if len(cleaned) <= max_len:
+        return cleaned
+    return f"{cleaned[: max_len - 3]}..."
+
+
+def _extract_reference_slot(compact: str) -> str | None:
+    patterns = (
+        r"\b(?:pedido|orden|order|transaccion|pago|id|nro|numero|guia|tracking|publicacion)\s*[:#-]?\s*([a-z0-9-]{4,})\b",
+        r"\b([a-z]{2,}-\d{3,})\b",
+        r"\b(\d{6,})\b",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, compact)
+        if match:
+            return match.group(1)
+    return None
+
+
+def _extract_detail_slot(original_message: str, compact: str) -> str | None:
+    signals = (
+        "problema",
+        "error",
+        "falla",
+        "no puedo",
+        "no funciona",
+        "demora",
+        "rechaz",
+        "duplic",
+        "bloque",
+        "cancel",
+        "reclamo",
+    )
+    if len(compact) < 20:
+        return None
+    if not any(signal in compact for signal in signals):
+        return None
+    return _shorten(original_message)
+
+
+def _extract_payment_method_slot(compact: str) -> str | None:
+    values = ("tarjeta", "yape", "plin", "transferencia", "paypal", "visa", "mastercard")
+    for value in values:
+        if value in compact:
+            return value
+    return None
+
+
+def _extract_shipping_context_slot(compact: str) -> str | None:
+    values = ("tracking", "guia", "courier", "direccion", "ciudad", "entrega")
+    for value in values:
+        if value in compact:
+            return value
+    return None
+
+
+def _extract_channel_slot(compact: str) -> str | None:
+    values = ("app", "web", "login", "checkout", "carrito", "cuenta")
+    for value in values:
+        if value in compact:
+            return value
+    return None
+
+
+def _extract_error_context_slot(original_message: str, compact: str) -> str | None:
+    if "error" in compact or "codigo" in compact:
+        return _shorten(original_message)
+    return None
+
+
+def _extract_impact_slot(compact: str) -> str | None:
+    values = ("urgente", "afecta", "perdida", "perdi", "molesto", "grave")
+    for value in values:
+        if value in compact:
+            return value
+    return None
+
+
+def _extract_user_role_slot(compact: str) -> str | None:
+    if "artesano" in compact or "vendedor" in compact:
+        return "artesano"
+    if "comprador" in compact or "cliente" in compact:
+        return "comprador"
+    return None
+
+
+def _extract_slot_values(area: str, message: str) -> dict[str, str]:
+    compact = " ".join(_normalize_text(message).split())
+    values: dict[str, str] = {}
+
+    detail = _extract_detail_slot(message, compact)
+    if detail:
+        values["detail"] = detail
+
+    reference = _extract_reference_slot(compact)
+    if reference:
+        values["reference"] = reference
+
+    payment_method = _extract_payment_method_slot(compact)
+    if payment_method:
+        values["payment_method"] = payment_method
+
+    shipping_context = _extract_shipping_context_slot(compact)
+    if shipping_context:
+        values["shipping_context"] = shipping_context
+
+    channel = _extract_channel_slot(compact)
+    if channel:
+        values["channel"] = channel
+
+    error_context = _extract_error_context_slot(message, compact)
+    if error_context:
+        values["error_context"] = error_context
+
+    impact = _extract_impact_slot(compact)
+    if impact:
+        values["impact"] = impact
+
+    user_role = _extract_user_role_slot(compact)
+    if user_role:
+        values["user_role"] = user_role
+
+    required_slots = set(_intake_rule_for_area(area)["required"])
+    return {slot: value for slot, value in values.items() if slot in required_slots}
+
+
+def _merge_session_slot_values(session: IntakeSession, message: str) -> None:
+    extracted = _extract_slot_values(session.area, message)
+    for slot, value in extracted.items():
+        if value and not session.slot_values.get(slot):
+            session.slot_values[slot] = value
+    session.collected_text = _shorten(f"{session.collected_text} | {message}".strip(" |"), max_len=700)
+    session.updated_at = _now_utc()
+
+
+def _intake_progress(area: str, slot_values: dict[str, str]) -> tuple[list[str], float, bool]:
+    rule = _intake_rule_for_area(area)
+    required_slots: tuple[str, ...] = rule["required"]
+    mandatory_slots: tuple[str, ...] = rule["mandatory"]
+    threshold: float = rule["threshold"]
+
+    present_count = sum(1 for slot in required_slots if slot_values.get(slot))
+    ratio = present_count / max(len(required_slots), 1)
+    missing = [slot for slot in required_slots if not slot_values.get(slot)]
+    mandatory_ok = all(slot_values.get(slot) for slot in mandatory_slots)
+    ready = mandatory_ok and ratio >= threshold
+    return missing, ratio, ready
+
+
+def _build_intake_missing_reply(area: str, missing_slots: list[str], ratio: float) -> str:
+    lines = [
+        "Perfecto, antes de crear tu ticket necesito algunos datos para derivarlo correctamente:",
+        f"- Area detectada: *{area}*",
+        f"- Completitud actual: *{int(ratio * 100)}%*",
+        "*Datos faltantes:*",
+    ]
+    for slot in missing_slots:
+        label = INTAKE_SLOT_LABELS.get(slot, slot)
+        lines.append(f"- {label}")
+    lines.append("Si no tienes un dato, indicalo igual y avanzamos.")
+    return "\n".join(lines)
+
+
+def _build_intake_confirmation_reply(area: str, slot_values: dict[str, str], summary: str, ratio: float) -> str:
+    lines = [
+        "*Confirmacion de ticket*",
+        f"- Area: *{area}*",
+        f"- Completitud: *{int(ratio * 100)}%*",
+        f"- Resumen propuesto: {_shorten(summary, max_len=220)}",
+        "*Datos capturados:*",
+    ]
+
+    for slot in _intake_rule_for_area(area)["required"]:
+        value = slot_values.get(slot)
+        if value:
+            lines.append(f"- {INTAKE_SLOT_LABELS.get(slot, slot)}: {_shorten(value, max_len=90)}")
+
+    lines.append("Responde *SI* para crear el ticket con esta informacion o envia mas detalles.")
+    return "\n".join(lines)
+
+
+def _is_affirmative_confirmation(message: str) -> bool:
+    compact = " ".join(_normalize_text(message).split())
+    if compact in {"si", "ok", "dale", "confirmo", "adelante", "procede"}:
+        return True
+    return "si crear" in compact or "crear ticket" in compact or "confirmar ticket" in compact
+
+
+def _is_negative_confirmation(message: str) -> bool:
+    compact = " ".join(_normalize_text(message).split())
+    return compact in {"no", "aun no", "todavia no", "espera", "cancelar", "cancela"}
+
+
+def _wants_cancel_intake(message: str) -> bool:
+    compact = " ".join(_normalize_text(message).split())
+    return compact in {
+        "cancelar",
+        "cancela",
+        "mejor no",
+        "olvidalo",
+        "olvidalo por ahora",
+    }
+
+
+def _build_intake_summary(session: IntakeSession) -> str:
+    parts = [session.summary_seed.strip()]
+    for slot in _intake_rule_for_area(session.area)["required"]:
+        value = session.slot_values.get(slot)
+        if value:
+            label = INTAKE_SLOT_LABELS.get(slot, slot)
+            parts.append(f"{label}: {value}")
+    summary = " | ".join(part for part in parts if part)
+    return _shorten(summary, max_len=760)
+
+
+def _create_ticket_from_intake(phone: str, open_tickets: list[TicketModel], session: IntakeSession) -> AgentProcessOut:
+    if len(open_tickets) >= MAX_OPEN_TICKETS:
+        return AgentProcessOut(
+            action="no_action",
+            ticket_id=open_tickets[0].id,
+            area=open_tickets[0].area,
+            summary=open_tickets[0].summary,
+            wa_link=f"https://wa.me/{''.join(ch for ch in phone if ch.isdigit())}",
+            reply_message=_build_close_ticket_options_message(open_tickets),
+        )
+
+    ticket = create_ticket(phone, area=session.area, summary=_build_intake_summary(session))
+    _clear_intake_session(phone)
+    return AgentProcessOut(
+        action="create_ticket",
+        ticket_id=ticket.id,
+        area=ticket.area,
+        summary=ticket.summary,
+        wa_link=f"https://wa.me/{''.join(ch for ch in ticket.user_phone if ch.isdigit())}",
+        reply_message=_build_ticket_reply("create_ticket", ticket),
+    )
+
+
+def _handle_existing_intake_session(payload: AgentProcessIn, open_tickets: list[TicketModel]) -> AgentProcessOut | None:
+    session = _get_intake_session(payload.phone)
+    if session is None:
+        return None
+
+    if _wants_cancel_intake(payload.message):
+        _clear_intake_session(payload.phone)
+        return AgentProcessOut(
+            action="no_action",
+            reply_message="Entendido. No creare ticket por ahora. Cuando quieras, cuentame el problema y empezamos de nuevo.",
+        )
+
+    if _is_negative_confirmation(payload.message):
+        session.awaiting_confirmation = False
+        _merge_session_slot_values(session, payload.message)
+        _upsert_intake_session(payload.phone, session)
+        return AgentProcessOut(
+            action="no_action",
+            reply_message="Perfecto, cuentame un poco mas del caso y completo tu ticket antes de crearlo.",
+        )
+
+    if session.awaiting_confirmation and _is_affirmative_confirmation(payload.message):
+        return _create_ticket_from_intake(payload.phone, open_tickets, session)
+
+    _merge_session_slot_values(session, payload.message)
+    missing_slots, ratio, ready = _intake_progress(session.area, session.slot_values)
+    if ready:
+        session.awaiting_confirmation = True
+        _upsert_intake_session(payload.phone, session)
+        return AgentProcessOut(
+            action="no_action",
+            reply_message=_build_intake_confirmation_reply(
+                session.area,
+                session.slot_values,
+                _build_intake_summary(session),
+                ratio,
+            ),
+        )
+
+    session.awaiting_confirmation = False
+    _upsert_intake_session(payload.phone, session)
+    return AgentProcessOut(
+        action="no_action",
+        reply_message=_build_intake_missing_reply(session.area, missing_slots, ratio),
+    )
+
+
+def _start_intake_for_new_ticket(payload: AgentProcessIn, area: str, summary_seed: str) -> AgentProcessOut:
+    session = _get_intake_session(payload.phone) or IntakeSession(area=area, summary_seed=summary_seed)
+    if session.area != area:
+        session.slot_values = {}
+        session.collected_text = ""
+        session.awaiting_confirmation = False
+    session.area = area
+    if summary_seed.strip():
+        session.summary_seed = summary_seed.strip()
+    _merge_session_slot_values(session, payload.message)
+
+    missing_slots, ratio, ready = _intake_progress(area, session.slot_values)
+    if ready:
+        session.awaiting_confirmation = True
+        _upsert_intake_session(payload.phone, session)
+        return AgentProcessOut(
+            action="no_action",
+            reply_message=_build_intake_confirmation_reply(
+                area,
+                session.slot_values,
+                _build_intake_summary(session),
+                ratio,
+            ),
+        )
+
+    session.awaiting_confirmation = False
+    _upsert_intake_session(payload.phone, session)
+    return AgentProcessOut(
+        action="no_action",
+        reply_message=_build_intake_missing_reply(area, missing_slots, ratio),
+    )
 
 
 def _normalize_text(text: str) -> str:
@@ -444,18 +857,6 @@ async def run_ticket_agent(payload: AgentProcessIn) -> AgentProcessOut:
     open_tickets = list_open_tickets_for_phone(payload.phone, limit=MAX_OPEN_TICKETS)
     recent_messages = list_recent_messages_by_phone(payload.phone, limit=RECENT_MESSAGES_LIMIT)
 
-    if _is_greeting_only(payload.message):
-        return AgentProcessOut(
-            action="no_action",
-            reply_message="Hola, soy Pueblo Agent de Pueblo Lindo. ¿En que puedo ayudarte hoy?",
-        )
-
-    if _is_out_of_scope_consultation(payload.message):
-        return AgentProcessOut(
-            action="no_action",
-            reply_message=_build_out_of_scope_reply(),
-        )
-
     close_choice = _extract_close_choice(payload.message, len(open_tickets))
     if close_choice is not None and open_tickets:
         target = open_tickets[close_choice - 1]
@@ -474,6 +875,22 @@ async def run_ticket_agent(payload: AgentProcessIn) -> AgentProcessOut:
             summary=target.summary,
             wa_link=f"https://wa.me/{''.join(ch for ch in payload.phone if ch.isdigit())}",
             reply_message=reply,
+        )
+
+    pending_intake = _handle_existing_intake_session(payload, open_tickets)
+    if pending_intake is not None:
+        return pending_intake
+
+    if _is_greeting_only(payload.message):
+        return AgentProcessOut(
+            action="no_action",
+            reply_message="Hola, soy Pueblo Agent de Pueblo Lindo. ¿En que puedo ayudarte hoy?",
+        )
+
+    if _is_out_of_scope_consultation(payload.message):
+        return AgentProcessOut(
+            action="no_action",
+            reply_message=_build_out_of_scope_reply(),
         )
 
     decision: AgentDecision
@@ -514,26 +931,10 @@ async def run_ticket_agent(payload: AgentProcessIn) -> AgentProcessOut:
                 )
 
     if decision.action == "create_ticket" and decision.create_ticket is not None:
-        # Keep a hard cap of open tickets per user.
-        if len(open_tickets) >= MAX_OPEN_TICKETS:
-            return AgentProcessOut(
-                action="no_action",
-                ticket_id=open_tickets[0].id,
-                area=open_tickets[0].area,
-                summary=open_tickets[0].summary,
-                wa_link=f"https://wa.me/{''.join(ch for ch in payload.phone if ch.isdigit())}",
-                reply_message=_build_close_ticket_options_message(open_tickets),
-            )
-        else:
-            ticket = create_ticket(payload.phone, area=decision.create_ticket.area, summary=decision.create_ticket.summary)
-
-        return AgentProcessOut(
-            action="create_ticket",
-            ticket_id=ticket.id,
-            area=ticket.area,
-            summary=ticket.summary,
-            wa_link=f"https://wa.me/{''.join(ch for ch in ticket.user_phone if ch.isdigit())}",
-            reply_message=_build_ticket_reply("create_ticket", ticket),
+        return _start_intake_for_new_ticket(
+            payload,
+            decision.create_ticket.area,
+            decision.create_ticket.summary,
         )
 
     if decision.action == "update_ticket" and decision.update_ticket is not None:
@@ -545,18 +946,10 @@ async def run_ticket_agent(payload: AgentProcessIn) -> AgentProcessOut:
             target_id = target.id
 
         if target is None:
-            created = create_ticket(
-                payload.phone,
-                area=decision.update_ticket.area,
-                summary=decision.update_ticket.summary,
-            )
-            return AgentProcessOut(
-                action="create_ticket",
-                ticket_id=created.id,
-                area=created.area,
-                summary=created.summary,
-                wa_link=f"https://wa.me/{''.join(ch for ch in created.user_phone if ch.isdigit())}",
-                reply_message=_build_ticket_reply("create_ticket", created),
+            return _start_intake_for_new_ticket(
+                payload,
+                decision.update_ticket.area,
+                decision.update_ticket.summary,
             )
 
         merged = _merge_summaries(target.summary, decision.update_ticket.summary)
@@ -566,14 +959,10 @@ async def run_ticket_agent(payload: AgentProcessIn) -> AgentProcessOut:
             merged,
         )
         if updated is None:
-            created = create_ticket(payload.phone, area=decision.update_ticket.area, summary=decision.update_ticket.summary)
-            return AgentProcessOut(
-                action="create_ticket",
-                ticket_id=created.id,
-                area=created.area,
-                summary=created.summary,
-                wa_link=f"https://wa.me/{''.join(ch for ch in created.user_phone if ch.isdigit())}",
-                reply_message=_build_ticket_reply("create_ticket", created),
+            return _start_intake_for_new_ticket(
+                payload,
+                decision.update_ticket.area,
+                decision.update_ticket.summary,
             )
 
         return AgentProcessOut(
