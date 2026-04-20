@@ -29,6 +29,7 @@ AREAS = ("soporte_tecnico", "pagos", "envios", "reclamos", "ventas", "otros")
 RECENT_MESSAGES_LIMIT = 20
 MAX_OPEN_TICKETS = 5
 WAITING_MESSAGE_GENERIC = "Gracias por escribirnos. Estamos revisando tu caso y te respondemos enseguida."
+LLM_UNAVAILABLE_MESSAGE = "En este momento no puedo atenderte."
 
 BASE_PROMPT = """Eres Pueblo Agent, agente de triage de PuebloLindo.
 PuebloLindo es un marketplace que conecta artesanos rurales de Latinoamerica con compradores de todo el mundo.
@@ -405,9 +406,15 @@ async def run_ticket_agent(payload: AgentProcessIn) -> AgentProcessOut:
             decision = await _decide_with_llm(payload=payload, open_tickets=open_tickets, recent_messages=recent_messages)
         except Exception as exc:
             logger.warning("agent_llm_failed err=%s", exc)
-            decision = _fallback_decision(payload.message, open_tickets)
+            return AgentProcessOut(
+                action="no_action",
+                reply_message=LLM_UNAVAILABLE_MESSAGE,
+            )
     else:
-        decision = _fallback_decision(payload.message, open_tickets)
+        return AgentProcessOut(
+            action="no_action",
+            reply_message=LLM_UNAVAILABLE_MESSAGE,
+        )
 
     if decision.action == "create_ticket" and open_tickets and not _is_explicit_new_ticket_request(payload.message):
         matched = _best_matching_open_ticket(payload.message, open_tickets)
