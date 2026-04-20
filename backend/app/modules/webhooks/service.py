@@ -221,6 +221,14 @@ async def process_whatsapp_webhook(payload: WhatsAppWebhookIn) -> WebhookAckOut:
         ticket_id=ticket.id,
     )
 
+    # Send follow-up message if ticket was just created
+    if agent_out.action == "create_ticket":
+        await send_outbound_message_for_ticket(
+            phone=user_phone,
+            message="Se estará comunicando con usted para resolver el problema, gracias por esperar.",
+            ticket_id=ticket.id,
+        )
+
     logger.info(
         "webhook_received event_id=%s ticket_id=%s phone=%s",
         external_message_id,

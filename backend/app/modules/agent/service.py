@@ -339,7 +339,6 @@ def _build_intake_confirmation_reply(area: str, slot_values: dict[str, str], sum
         "*Confirmacion de ticket*",
         f"- Area: *{area}*",
         f"- Completitud: *{int(ratio * 100)}%*",
-        f"- Resumen propuesto: {_shorten(summary, max_len=220)}",
         "*Datos capturados:*",
     ]
 
