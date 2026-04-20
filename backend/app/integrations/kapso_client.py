@@ -20,15 +20,21 @@ async def send_text_message(phone: str, message: str) -> KapsoSendResult:
 
     if not settings.kapso_api_key:
         raise ValueError("KAPSO_API_KEY is required when kapso_mock_mode is disabled")
+    if not settings.kapso_phone_number_id:
+        raise ValueError("KAPSO_PHONE_NUMBER_ID is required when kapso_mock_mode is disabled")
 
-    url = f"{settings.kapso_base_url.rstrip('/')}{settings.kapso_send_path}"
+    url = (
+        f"{settings.kapso_base_url.rstrip('/')}"
+        f"{settings.kapso_send_path.format(phone_number_id=settings.kapso_phone_number_id)}"
+    )
     payload = {
+        "messaging_product": "whatsapp",
         "to": phone,
         "type": "text",
         "text": {"body": message},
     }
     headers = {
-        "Authorization": f"Bearer {settings.kapso_api_key}",
+        "X-API-Key": settings.kapso_api_key,
         "Content-Type": "application/json",
     }
 
