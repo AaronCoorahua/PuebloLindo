@@ -21,7 +21,7 @@ def _message_from_dict(row: dict[str, object]) -> MessageModel:
 
 def save_message(
     *,
-    ticket_id: UUID,
+    ticket_id: UUID | None,
     user_phone: str,
     sender: str,
     content: str,
@@ -32,7 +32,7 @@ def save_message(
     now = _now_utc()
     payload = {
         "id": str(uuid4()),
-        "ticket_id": str(ticket_id),
+        "ticket_id": str(ticket_id) if ticket_id is not None else None,
         "user_phone": user_phone,
         "external_message_id": external_message_id,
         "sender": sender,
@@ -94,6 +94,18 @@ async def send_outbound_message_for_ticket(*, phone: str, message: str, ticket_i
         provider_message_id=kapso_result.provider_message_id,
         ticket_id=ticket_id,
     )
+
+
+async def send_outbound_message_without_ticket(*, phone: str, message: str) -> str:
+    kapso_result = await send_text_message(phone=phone, message=message)
+    save_message(
+        ticket_id=None,
+        user_phone=phone,
+        sender="agent",
+        content=message,
+        external_message_id=kapso_result.provider_message_id,
+    )
+    return kapso_result.provider_message_id
 
 
 async def send_outbound_message(payload: SendMessageIn) -> SendMessageOut:

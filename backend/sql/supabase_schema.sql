@@ -23,7 +23,7 @@ create index if not exists idx_tickets_phone_status_activity
 
 create table if not exists public.messages (
   id uuid primary key,
-  ticket_id uuid not null references public.tickets(id) on delete cascade,
+  ticket_id uuid references public.tickets(id) on delete cascade,
   user_phone text not null,
   external_message_id text null,
   sender text not null check (sender in ('user', 'agent')),
@@ -32,6 +32,7 @@ create table if not exists public.messages (
 );
 
 alter table public.messages add column if not exists user_phone text;
+alter table public.messages alter column ticket_id drop not null;
 
 create index if not exists idx_messages_phone_created
   on public.messages(user_phone, created_at desc);

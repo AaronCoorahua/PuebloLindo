@@ -5,13 +5,13 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
-from app.integrations.kapso_client import send_text_message
 from app.modules.agent.schemas import AgentProcessIn
 from app.modules.agent.service import run_ticket_agent
 from app.modules.messages.service import (
     find_message_by_external_id,
     save_message,
     send_outbound_message_for_ticket,
+    send_outbound_message_without_ticket,
 )
 from app.modules.tickets.service import get_or_create_open_ticket, get_ticket_by_id, list_open_tickets_for_phone
 from app.modules.webhooks.schemas import WebhookAckOut, WhatsAppWebhookIn
@@ -181,7 +181,14 @@ async def process_whatsapp_webhook(payload: WhatsAppWebhookIn) -> WebhookAckOut:
 
     # For greeting/small-talk events we can reply without forcing ticket creation.
     if agent_out.action == "no_action" and agent_out.ticket_id is None:
-        await send_text_message(phone=user_phone, message=agent_out.reply_message)
+        save_message(
+            ticket_id=None,
+            user_phone=user_phone,
+            sender="user",
+            content=content,
+            external_message_id=external_message_id,
+        )
+        await send_outbound_message_without_ticket(phone=user_phone, message=agent_out.reply_message)
         logger.info(
             "webhook_received_no_ticket event_id=%s phone=%s",
             external_message_id,

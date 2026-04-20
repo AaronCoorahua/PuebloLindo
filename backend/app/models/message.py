@@ -9,7 +9,7 @@ from uuid import UUID
 @dataclass(slots=True)
 class MessageModel:
     id: UUID
-    ticket_id: UUID
+    ticket_id: UUID | None
     user_phone: str
     external_message_id: str | None
     sender: str
@@ -20,7 +20,7 @@ class MessageModel:
     def from_row(cls, row: Mapping[str, object]) -> "MessageModel":
         return cls(
             id=UUID(row["id"]),
-            ticket_id=UUID(row["ticket_id"]),
+            ticket_id=UUID(str(row["ticket_id"])) if row.get("ticket_id") else None,
             user_phone=str(row.get("user_phone") or ""),
             external_message_id=str(row["external_message_id"]) if row.get("external_message_id") else None,
             sender=str(row["sender"]),

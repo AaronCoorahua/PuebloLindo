@@ -398,7 +398,6 @@ def _create_ticket_from_intake(phone: str, open_tickets: list[TicketModel], sess
         )
 
     ticket = create_ticket(phone, area=session.area, summary=_build_intake_summary(session))
-    _clear_intake_session(phone)
     return AgentProcessOut(
         action="create_ticket",
         ticket_id=ticket.id,
@@ -409,13 +408,15 @@ def _create_ticket_from_intake(phone: str, open_tickets: list[TicketModel], sess
     )
 
 
-def _handle_existing_intake_session(payload: AgentProcessIn, open_tickets: list[TicketModel]) -> AgentProcessOut | None:
-    session = _get_intake_session(payload.phone)
+def _handle_existing_intake_session(
+    payload: AgentProcessIn,
+    open_tickets: list[TicketModel],
+    session: IntakeSession | None,
+) -> AgentProcessOut | None:
     if session is None:
         return None
 
     if _wants_cancel_intake(payload.message):
-        _clear_intake_session(payload.phone)
         return AgentProcessOut(
             action="no_action",
             reply_message="Entendido. No creare ticket por ahora. Cuando quieras, cuentame el problema y empezamos de nuevo.",
@@ -424,7 +425,6 @@ def _handle_existing_intake_session(payload: AgentProcessIn, open_tickets: list[
     if _is_negative_confirmation(payload.message):
         session.awaiting_confirmation = False
         _merge_session_slot_values(session, payload.message)
-        _upsert_intake_session(payload.phone, session)
         return AgentProcessOut(
             action="no_action",
             reply_message="Perfecto, cuentame un poco mas del caso y completo tu ticket antes de crearlo.",
@@ -437,7 +437,6 @@ def _handle_existing_intake_session(payload: AgentProcessIn, open_tickets: list[
     missing_slots, ratio, ready = _intake_progress(session.area, session.slot_values)
     if ready:
         session.awaiting_confirmation = True
-        _upsert_intake_session(payload.phone, session)
         return AgentProcessOut(
             action="no_action",
             reply_message=_build_intake_confirmation_reply(
@@ -449,7 +448,6 @@ def _handle_existing_intake_session(payload: AgentProcessIn, open_tickets: list[
         )
 
     session.awaiting_confirmation = False
-    _upsert_intake_session(payload.phone, session)
     return AgentProcessOut(
         action="no_action",
         reply_message=_build_intake_missing_reply(session.area, missing_slots, ratio),
@@ -457,11 +455,7 @@ def _handle_existing_intake_session(payload: AgentProcessIn, open_tickets: list[
 
 
 def _start_intake_for_new_ticket(payload: AgentProcessIn, area: str, summary_seed: str) -> AgentProcessOut:
-    session = _get_intake_session(payload.phone) or IntakeSession(area=area, summary_seed=summary_seed)
-    if session.area != area:
-        session.slot_values = {}
-        session.collected_text = ""
-        session.awaiting_confirmation = False
+    session = IntakeSession(area=area, summary_seed=summary_seed)
     session.area = area
     if summary_seed.strip():
         session.summary_seed = summary_seed.strip()
@@ -470,7 +464,6 @@ def _start_intake_for_new_ticket(payload: AgentProcessIn, area: str, summary_see
     missing_slots, ratio, ready = _intake_progress(area, session.slot_values)
     if ready:
         session.awaiting_confirmation = True
-        _upsert_intake_session(payload.phone, session)
         return AgentProcessOut(
             action="no_action",
             reply_message=_build_intake_confirmation_reply(
@@ -482,11 +475,106 @@ def _start_intake_for_new_ticket(payload: AgentProcessIn, area: str, summary_see
         )
 
     session.awaiting_confirmation = False
-    _upsert_intake_session(payload.phone, session)
     return AgentProcessOut(
         action="no_action",
         reply_message=_build_intake_missing_reply(area, missing_slots, ratio),
     )
+
+
+def _is_intake_prompt_message(content: str) -> bool:
+    compact = " ".join(_normalize_text(content).split())
+    return (
+        "antes de crear tu ticket necesito" in compact
+        or "confirmacion de ticket" in compact
+        or "responde si para crear el ticket" in compact
+    )
+
+
+def _is_ticket_resolution_message(content: str) -> bool:
+    compact = " ".join(_normalize_text(content).split())
+    return "ticket creado" in compact or "ticket actualizado" in compact
+
+
+def _extract_intake_area_from_message(content: str) -> str | None:
+    compact = " ".join(_normalize_text(content).split())
+    # Intake prompts may include markdown punctuation (e.g. "Area detectada: *pagos*").
+    # After normalization punctuation is removed, so parse with relaxed separators.
+    patterns = (
+        r"\barea\s+detectada\s+([a-z_]+)\b",
+        r"\barea\s+([a-z_]+)\b",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, compact)
+        if not match:
+            continue
+        candidate = match.group(1)
+        if candidate in AREAS:
+            return candidate
+    return None
+
+
+def _rehydrate_intake_from_recent_messages(recent_messages: list[MessageModel]) -> IntakeSession | None:
+    if not recent_messages:
+        return None
+
+    last_prompt_index: int | None = None
+    for idx in range(len(recent_messages) - 1, -1, -1):
+        message = recent_messages[idx]
+        if message.sender == "agent" and _is_intake_prompt_message(message.content):
+            last_prompt_index = idx
+            break
+
+    if last_prompt_index is None:
+        return None
+
+    intake_prompt = recent_messages[last_prompt_index]
+    area = _extract_intake_area_from_message(intake_prompt.content) or "otros"
+    session = IntakeSession(area=area, summary_seed="")
+
+    prompt_compact = " ".join(_normalize_text(intake_prompt.content).split())
+    session.awaiting_confirmation = "confirmacion de ticket" in prompt_compact
+
+    # Reconstruct slot values from user context that existed before the intake prompt.
+    for message in recent_messages[:last_prompt_index]:
+        if message.sender != "user":
+            continue
+        if not session.summary_seed.strip():
+            session.summary_seed = f"Cliente reporta: {message.content}"
+        _merge_session_slot_values(session, message.content)
+
+    for message in recent_messages[last_prompt_index + 1 :]:
+        if message.sender == "agent" and _is_ticket_resolution_message(message.content):
+            return None
+
+        if message.sender == "agent" and _is_intake_prompt_message(message.content):
+            area_from_followup = _extract_intake_area_from_message(message.content)
+            if area_from_followup:
+                session.area = area_from_followup
+            followup_compact = " ".join(_normalize_text(message.content).split())
+            session.awaiting_confirmation = "confirmacion de ticket" in followup_compact
+            continue
+
+        if message.sender != "user":
+            continue
+
+        if _wants_cancel_intake(message.content):
+            return None
+
+        if not session.summary_seed.strip():
+            session.summary_seed = f"Cliente reporta: {message.content}"
+        _merge_session_slot_values(session, message.content)
+
+    if not session.summary_seed.strip():
+        for message in reversed(recent_messages[:last_prompt_index]):
+            if message.sender == "user":
+                session.summary_seed = f"Cliente reporta: {message.content}"
+                break
+
+    if not session.summary_seed.strip():
+        session.summary_seed = "Cliente reporta incidencia"
+
+    session.updated_at = _now_utc()
+    return session
 
 
 def _normalize_text(text: str) -> str:
@@ -882,9 +970,11 @@ async def run_ticket_agent(payload: AgentProcessIn) -> AgentProcessOut:
             reply_message=reply,
         )
 
-    pending_intake = _handle_existing_intake_session(payload, open_tickets)
-    if pending_intake is not None:
-        return pending_intake
+    rehydrated_session = _rehydrate_intake_from_recent_messages(recent_messages)
+    if rehydrated_session is not None:
+        pending_intake = _handle_existing_intake_session(payload, open_tickets, rehydrated_session)
+        if pending_intake is not None:
+            return pending_intake
 
     if _is_greeting_only(payload.message):
         return AgentProcessOut(
