@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import unicodedata
 from typing import Any
 from uuid import UUID
 
@@ -29,25 +30,36 @@ RECENT_MESSAGES_LIMIT = 20
 MAX_OPEN_TICKETS = 5
 WAITING_MESSAGE_GENERIC = "Gracias por escribirnos. Estamos revisando tu caso y te respondemos enseguida."
 
-BASE_PROMPT = """Eres un agente de triage para WhatsApp de Customer Success de Pueblo Lindo. Tu nombre es Pueblo Agent.
+BASE_PROMPT = """Eres Pueblo Agent, agente de triage de PuebloLindo.
+PuebloLindo es un marketplace que conecta artesanos rurales de Latinoamerica con compradores de todo el mundo.
+
+Tu objetivo es gestionar incidencias operativas del marketplace, no consultas generales.
+
 Decide UNA accion para el mensaje entrante:
-- create_ticket: crear un ticket nuevo
+- create_ticket: crear ticket nuevo
 - update_ticket: actualizar resumen/area de un ticket abierto existente
 - no_action: no crear ni actualizar ticket
 
 Reglas obligatorias:
 - Solo puedes actualizar tickets abiertos.
-- Si hay multiples tickets abiertos, elige el ticket que tenga mayor relacion semantica con el mensaje.
-- Si no hay relacion clara y el mensaje expresa una incidencia o solicitud nueva, crea ticket nuevo.
-- Usa solo estas areas: soporte_tecnico, pagos, envios, reclamos, ventas, otros.
+- Si hay multiples tickets abiertos, elige el ticket con mayor relacion semantica.
+- Si no hay relacion clara y el mensaje describe un incidente nuevo del marketplace, crea ticket nuevo.
+- Si el mensaje NO es una incidencia del marketplace (ej: programacion, tareas, curiosidades, consultas generales), usa no_action.
+- Usa solo estas areas y su alcance:
+    - soporte_tecnico: errores de plataforma, login, cuenta, bugs, fallas tecnicas.
+    - pagos: cobros, pagos rechazados, reembolsos, facturacion.
+    - envios: estado de envio, demoras, no entrega, tracking.
+    - reclamos: quejas formales, disconformidad, mala experiencia, disputa.
+    - ventas: dudas comerciales sobre compra/venta dentro del marketplace.
+    - otros: incidencias reales del marketplace que no calzan claramente en las anteriores.
 - El summary debe ser breve, accionable y en espanol.
 
-Responde SOLAMENTE con JSON valido con esta forma:
+Responde SOLO con JSON valido en esta forma:
 {
-  "action": "create_ticket" | "update_ticket" | "no_action",
-  "create_ticket": {"area": string, "summary": string} | null,
-  "update_ticket": {"ticket_id": string, "area": string, "summary": string, "reason": string} | null,
-  "no_action": {"reason": string} | null
+    "action": "create_ticket" | "update_ticket" | "no_action",
+    "create_ticket": {"area": string, "summary": string} | null,
+    "update_ticket": {"ticket_id": string, "area": string, "summary": string, "reason": string} | null,
+    "no_action": {"reason": string} | null
 }
 """
 
@@ -58,7 +70,8 @@ def build_waiting_message() -> str:
 
 def _normalize_text(text: str) -> str:
     lowered = text.lower()
-    return re.sub(r"[^a-z0-9\s]", " ", lowered)
+    folded = unicodedata.normalize("NFKD", lowered).encode("ascii", "ignore").decode("ascii")
+    return re.sub(r"[^a-z0-9\s]", " ", folded)
 
 
 def _is_greeting_only(message: str) -> bool:
@@ -93,10 +106,26 @@ def _is_out_of_scope_consultation(message: str) -> bool:
     if not compact:
         return False
 
-    problem_signals = (
+    non_marketplace_tech_signals = (
+        "fibonacci",
+        "python",
+        "javascript",
+        "java",
+        "codigo",
+        "programar",
+        "algoritmo",
+        "api",
+        "sql",
+        "html",
+        "css",
+        "debug",
+    )
+    if any(signal in compact for signal in non_marketplace_tech_signals):
+        return True
+
+    marketplace_problem_signals = (
         "problema",
         "error",
-        "falla",
         "falla",
         "reclamo",
         "no puedo",
@@ -104,15 +133,21 @@ def _is_out_of_scope_consultation(message: str) -> bool:
         "ayuda",
         "demora",
         "pago",
+        "reembolso",
         "envio",
         "pedido",
-        "pedido",
         "devolucion",
+        "cuenta",
+        "login",
+        "artesano",
+        "comprador",
+        "compra",
+        "venta",
     )
-    if any(signal in compact for signal in problem_signals):
+    if any(signal in compact for signal in marketplace_problem_signals):
         return False
 
-    consultation_signals = (
+    general_consultation_signals = (
         "precio",
         "precios",
         "catalogo",
@@ -126,22 +161,21 @@ def _is_out_of_scope_consultation(message: str) -> bool:
         "vender",
         "marketplace",
         "informacion",
-        "información",
         "consulta",
         "quienes son",
-        "qué es",
         "que es",
+        "como funciona",
     )
-    has_question_shape = "?" in message or compact.startswith(("como", "cómo", "que", "qué", "cual", "cuál"))
-    return has_question_shape and any(signal in compact for signal in consultation_signals)
+    has_question_shape = "?" in message or compact.startswith(("como", "que", "cual", "donde", "quien"))
+    return has_question_shape and any(signal in compact for signal in general_consultation_signals)
 
 
 def _build_out_of_scope_reply() -> str:
     return (
-        "Gracias por escribirnos. Soy Pueblo Agent y estoy diseñado para procesar "
-        "problemas o incidencias de PuebloLindo para derivarlos con el equipo correcto. "
-        "Si tienes algun inconveniente con pagos, envios, pedidos o tu cuenta, cuentamelo "
-        "y te ayudo a canalizarlo."
+        "Gracias por escribirnos. Soy Pueblo Agent y solo gestiono incidencias de PuebloLindo "
+        "para derivarlas al area correcta. "
+        "Si tienes un problema con pagos, envios, pedidos, cuenta o reclamos del marketplace, "
+        "cuentamelo y te ayudo de inmediato."
     )
 
 
@@ -232,12 +266,14 @@ def _summary_title(summary: str) -> str:
 
 def _build_close_ticket_options_message(open_tickets: list[TicketModel]) -> str:
     lines = [
-        f"Tienes el maximo de {MAX_OPEN_TICKETS} tickets abiertos.",
-        "Para abrir un ticket nuevo, primero cierra uno enviando: CERRAR <numero>",
-        "Tickets abiertos:",
+        "*Limite de tickets abiertos alcanzado*",
+        f"Tienes *{MAX_OPEN_TICKETS}* tickets abiertos.",
+        "Para abrir un ticket nuevo, primero cierra uno enviando: *CERRAR <numero>*",
+        "*Tickets abiertos:*",
     ]
     for idx, ticket in enumerate(open_tickets, start=1):
-        lines.append(f"{idx}) {ticket.id} - {_summary_title(ticket.summary)}")
+        lines.append(f"{idx}) *ID:* {ticket.id}")
+        lines.append(f"   *Resumen:* {_summary_title(ticket.summary)}")
     return "\n".join(lines)
 
 
@@ -308,16 +344,19 @@ def _build_ticket_reply(action: str, ticket: TicketModel | None, reason: str | N
     if ticket is None:
         return "Hola, soy Pueblo Agent de Pueblo Lindo. ¿En que puedo ayudarte hoy?"
 
-    wa_link = f"https://wa.me/{''.join(ch for ch in ticket.user_phone if ch.isdigit())}"
     if action == "create_ticket":
         return (
-            f"Ticket creado: {ticket.id}. Area: {ticket.area}. "
-            f"Resumen: {ticket.summary}. Contacto rapido: {wa_link}"
+            "*Ticket creado*\n"
+            f"- *ID:* {ticket.id}\n"
+            f"- *Area:* {ticket.area}\n"
+            f"- *Resumen:* {ticket.summary}"
         )
     if action == "update_ticket":
         return (
-            f"Ticket actualizado: {ticket.id}. Area: {ticket.area}. "
-            f"Resumen actual: {ticket.summary}. Contacto rapido: {wa_link}"
+            "*Ticket actualizado*\n"
+            f"- *ID:* {ticket.id}\n"
+            f"- *Area:* {ticket.area}\n"
+            f"- *Resumen:* {ticket.summary}"
         )
     if reason:
         return "Gracias por escribirnos. ¿Puedes contarme un poco mas de tu caso para ayudarte mejor?"
@@ -457,27 +496,8 @@ async def run_ticket_agent(payload: AgentProcessIn) -> AgentProcessOut:
             reply_message=_build_ticket_reply("update_ticket", updated),
         )
 
-    no_action_reason = decision.no_action.reason if decision.no_action else "Sin motivo especificado."
-    if open_tickets:
-        target = open_tickets[0]
-        merged = _merge_summaries(target.summary, f"Actualizacion: {payload.message}")
-        updated = update_open_ticket_summary(target.id, target.area, merged)
-        if updated is not None:
-            return AgentProcessOut(
-                action="update_ticket",
-                ticket_id=updated.id,
-                area=updated.area,
-                summary=updated.summary,
-                wa_link=f"https://wa.me/{''.join(ch for ch in updated.user_phone if ch.isdigit())}",
-                reply_message=_build_ticket_reply("no_action", updated, no_action_reason),
-            )
-
-    created = create_ticket(payload.phone, area="otros", summary=f"Cliente reporta: {payload.message}")
+    no_action_reason = decision.no_action.reason if decision.no_action else None
     return AgentProcessOut(
-        action="create_ticket",
-        ticket_id=created.id,
-        area=created.area,
-        summary=created.summary,
-        wa_link=f"https://wa.me/{''.join(ch for ch in created.user_phone if ch.isdigit())}",
-        reply_message=_build_ticket_reply("no_action", created, no_action_reason),
+        action="no_action",
+        reply_message=_build_ticket_reply("no_action", None, no_action_reason),
     )
