@@ -91,8 +91,8 @@ INTAKE_SLOT_LABELS = {
     "user_role": "Rol del usuario (comprador/artesano)",
 }
 
-BASE_PROMPT = """Eres Pueblo Agent, agente de triage de PuebloLindo.
-PuebloLindo es un marketplace que conecta artesanos rurales de Latinoamerica con compradores de todo el mundo.
+BASE_PROMPT = """Eres Pueblo Agent, agente de triage de Pueblo Lindo.
+Pueblo Lindo es un marketplace que conecta artesanos rurales de Latinoamerica con compradores de todo el mundo.
 
 Tu objetivo es gestionar incidencias operativas del marketplace, no consultas generales.
 
@@ -653,7 +653,7 @@ def _is_out_of_scope_consultation(message: str) -> bool:
 def _build_out_of_scope_reply() -> str:
     return (
         "Gracias por escribirnos. No puedo ayudar con esa consulta. "
-        "Soy Pueblo Agent y solo gestiono incidencias operativas de PuebloLindo "
+        "Soy Pueblo Agent y solo gestiono incidencias operativas de Pueblo Lindo "
         "para derivarlas al area correcta. "
         "Si tienes un problema con pagos, envios, pedidos, cuenta o reclamos del marketplace, "
         "cuentamelo y te ayudo de inmediato."
