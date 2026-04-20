@@ -54,6 +54,7 @@ Si tuviera una semana adicional, priorizaria:
 	- Mensaje de WhatsApp a numeros encargados por area.
 	- Si el agente no puede asignar con certeza a un area operativa, crear el ticket en "otros" para revision humana y reasignacion posterior.
 3. Profundizar en el analisis de areas especificas del marketplace para mejorar el prompt del agente, reducir falsos positivos y elevar precision de clasificacion.
+4. Mejorar el flujo del agente. Afinar edge cases, medir casos de uso, y lograr que el agente actue de la mejor forma ante cualquier escenario posible en Producción.
 
 ### 4) Puntos adicionales (opcional)
 
