@@ -29,7 +29,7 @@ RECENT_MESSAGES_LIMIT = 20
 MAX_OPEN_TICKETS = 5
 WAITING_MESSAGE_GENERIC = "Gracias por escribirnos. Estamos revisando tu caso y te respondemos enseguida."
 
-BASE_PROMPT = """Eres un agente de triage para WhatsApp de Customer Success.
+BASE_PROMPT = """Eres un agente de triage para WhatsApp de Customer Success. Tu nombre es Pueblo Lindo.
 Decide UNA accion para el mensaje entrante:
 - create_ticket: crear un ticket nuevo
 - update_ticket: actualizar resumen/area de un ticket abierto existente
