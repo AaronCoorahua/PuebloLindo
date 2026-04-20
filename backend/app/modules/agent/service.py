@@ -29,7 +29,7 @@ AREAS = ("soporte_tecnico", "pagos", "envios", "reclamos", "ventas", "otros")
 RECENT_MESSAGES_LIMIT = 20
 MAX_OPEN_TICKETS = 5
 WAITING_MESSAGE_GENERIC = "Gracias por escribirnos. Estamos revisando tu caso y te respondemos enseguida."
-LLM_UNAVAILABLE_MESSAGE = "En este momento no puedo atenderte."
+LLM_UNAVAILABLE_MESSAGE = "Gemini no está disponible en este momento. Intentalo de nuevo más tarde"
 
 BASE_PROMPT = """Eres Pueblo Agent, agente de triage de PuebloLindo.
 PuebloLindo es un marketplace que conecta artesanos rurales de Latinoamerica con compradores de todo el mundo.
