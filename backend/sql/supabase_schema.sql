@@ -1,4 +1,4 @@
--- Run this in Supabase SQL editor when using STORAGE_BACKEND=supabase.
+-- Run this in Supabase SQL editor for tickets-only mode.
 
 create table if not exists public.tickets (
   id uuid primary key,
@@ -8,20 +8,8 @@ create table if not exists public.tickets (
   updated_at timestamptz not null
 );
 
-create table if not exists public.messages (
-  id uuid primary key,
-  ticket_id uuid not null references public.tickets(id) on delete cascade,
-  external_message_id text unique,
-  sender text not null check (sender in ('user', 'system')),
-  content text not null,
-  created_at timestamptz not null
-);
-
 create index if not exists idx_tickets_phone_status
   on public.tickets(user_phone, status);
-
-create index if not exists idx_messages_ticket_created
-  on public.messages(ticket_id, created_at);
 
 -- Recommended for production with PostgREST/Supabase API:
 -- enable row level security;

@@ -6,16 +6,6 @@ from uuid import UUID
 
 from pydantic import BaseModel
 
-
-class MessageOut(BaseModel):
-    id: UUID
-    ticket_id: UUID
-    external_message_id: str | None
-    sender: Literal["user", "system"]
-    content: str
-    created_at: datetime
-
-
 class TicketOut(BaseModel):
     id: UUID
     user_phone: str
@@ -26,7 +16,6 @@ class TicketOut(BaseModel):
 
 class TicketDetailOut(BaseModel):
     ticket: TicketOut
-    messages: list[MessageOut]
 
 
 class TicketListOut(BaseModel):
