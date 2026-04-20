@@ -67,12 +67,18 @@ export default function HistoryPage() {
             <Card key={ticket.id} className="h-full">
               <CardHeader>
                 <div className="flex items-center justify-between gap-2">
-                  <CardTitle className="text-lg">{ticket.area}</CardTitle>
+                  <CardTitle className="text-lg">{ticket.title?.trim() || ticket.area}</CardTitle>
                   <Badge>{ticket.status}</Badge>
                 </div>
-                <CardDescription>Ticket {ticket.id}</CardDescription>
+                <CardDescription>Ticket ID: {ticket.id}</CardDescription>
               </CardHeader>
               <CardContent className="space-y-3">
+                <p className="text-sm text-[var(--ink-700)]">
+                  <strong>Cerrado por:</strong> {ticket.closed_by?.trim() || "Sin registrar"}
+                </p>
+                <p className="text-sm text-[var(--ink-700)]">
+                  <strong>Mensaje de cierre:</strong> {ticket.closed_message?.trim() || "Sin registrar"}
+                </p>
                 <p className="text-sm text-[var(--ink-700)]">
                   <strong>Resumen:</strong> {ticket.summary}
                 </p>

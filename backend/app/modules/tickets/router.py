@@ -83,8 +83,10 @@ async def close_ticket_endpoint(
         return result
 
     close_message = (
-        f"Tu ticket ha sido cerrado por {payload.atendedor} "
-        f"con el mensaje: {payload.mensaje_cierre}"
+        "*Ticket cerrado*\n"
+        f"- Ticket ID: *{result.ticket.id}*\n"
+        f"- Cerrado por: *{payload.atendedor}*\n"
+        f"- Mensaje: *{payload.mensaje_cierre}*"
     )
 
     try:
