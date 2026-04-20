@@ -39,6 +39,7 @@ INTAKE_SESSION_TTL_MINUTES = 30
 class IntakeSession:
     area: str
     summary_seed: str
+    title_seed: str = ""
     slot_values: dict[str, str] = field(default_factory=dict)
     collected_text: str = ""
     awaiting_confirmation: bool = False
@@ -120,7 +121,7 @@ Reglas obligatorias:
 Responde SOLO con JSON valido en esta forma:
 {
     "action": "create_ticket" | "update_ticket" | "no_action",
-    "create_ticket": {"area": string, "summary": string} | null,
+    "create_ticket": {"area": string, "title": string, "summary": string} | null,
     "update_ticket": {"ticket_id": string, "area": string, "summary": string, "reason": string} | null,
     "no_action": {"reason": string} | null
 }
@@ -302,7 +303,7 @@ def _merge_session_slot_values(session: IntakeSession, message: str) -> None:
     for slot, value in extracted.items():
         if value and not session.slot_values.get(slot):
             session.slot_values[slot] = value
-    session.collected_text = _shorten(f"{session.collected_text} | {message}".strip(" |"), max_len=700)
+    session.collected_text = _shorten(f"{session.collected_text} {message}".strip(), max_len=700)
     session.updated_at = _now_utc()
 
 
@@ -375,14 +376,24 @@ def _wants_cancel_intake(message: str) -> bool:
 
 
 def _build_intake_summary(session: IntakeSession) -> str:
-    parts = [session.summary_seed.strip()]
-    for slot in _intake_rule_for_area(session.area)["required"]:
-        value = session.slot_values.get(slot)
-        if value:
-            label = INTAKE_SLOT_LABELS.get(slot, slot)
-            parts.append(f"{label}: {value}")
-    summary = " | ".join(part for part in parts if part)
-    return _shorten(summary, max_len=760)
+    detail = session.collected_text.strip()
+    if not detail:
+        seed = session.summary_seed.strip()
+        if seed.lower().startswith("cliente reporta:"):
+            detail = seed[len("cliente reporta:") :].strip()
+        else:
+            detail = seed
+    if not detail:
+        detail = "incidencia operativa del marketplace"
+    return _shorten(f"Cliente reporta: {detail}", max_len=760)
+
+
+def _build_intake_title(session: IntakeSession) -> str:
+    preferred = " ".join(session.title_seed.split()).strip()
+    if preferred:
+        return _shorten(preferred, max_len=120)
+    derived = _build_intake_summary(session).replace("Cliente reporta:", "").strip()
+    return _summary_title(derived)
 
 
 def _create_ticket_from_intake(phone: str, open_tickets: list[TicketModel], session: IntakeSession) -> AgentProcessOut:
@@ -396,7 +407,12 @@ def _create_ticket_from_intake(phone: str, open_tickets: list[TicketModel], sess
             reply_message=_build_close_ticket_options_message(open_tickets),
         )
 
-    ticket = create_ticket(phone, area=session.area, summary=_build_intake_summary(session))
+    ticket = create_ticket(
+        phone,
+        area=session.area,
+        title=_build_intake_title(session),
+        summary=_build_intake_summary(session),
+    )
     return AgentProcessOut(
         action="create_ticket",
         ticket_id=ticket.id,
@@ -453,8 +469,8 @@ def _handle_existing_intake_session(
     )
 
 
-def _start_intake_for_new_ticket(payload: AgentProcessIn, area: str, summary_seed: str) -> AgentProcessOut:
-    session = IntakeSession(area=area, summary_seed=summary_seed)
+def _start_intake_for_new_ticket(payload: AgentProcessIn, area: str, summary_seed: str, title_seed: str = "") -> AgentProcessOut:
+    session = IntakeSession(area=area, summary_seed=summary_seed, title_seed=title_seed)
     session.area = area
     if summary_seed.strip():
         session.summary_seed = summary_seed.strip()
@@ -787,6 +803,7 @@ def _fallback_decision(message: str, open_tickets: list[TicketModel]) -> AgentDe
         action="create_ticket",
         create_ticket={
             "area": "otros",
+            "title": "Incidencia operativa reportada",
             "summary": f"Cliente reporta: {message}",
         },
     )
@@ -888,29 +905,74 @@ def _tokenize_for_similarity(text: str) -> set[str]:
         "tengo",
         "sobre",
         "porque",
+        "hola",
+        "reporta",
+        "cliente",
+        "problema",
+        "metodo",
+        "pago",
+        "pagar",
+        "tarjeta",
+        "venta",
+        "compra",
+        "actualizacion",
     }
     return {token for token in tokens if token not in stop_words}
 
 
-def _best_matching_open_ticket(message: str, open_tickets: list[TicketModel]) -> TicketModel | None:
+def _extract_reference_from_text(text: str) -> str | None:
+    compact = " ".join(_normalize_text(text).split())
+    return _extract_reference_slot(compact)
+
+
+def _build_update_disambiguation_reply(open_tickets: list[TicketModel], suggested: TicketModel | None = None) -> str:
+    lines = [
+        "Detecte que podriamos estar ante un caso nuevo o una actualizacion, y quiero confirmarlo contigo.",
+    ]
+    if suggested is not None:
+        lines.append(f"Posible ticket relacionado: *{suggested.id}* ({_summary_title(suggested.summary)})")
+    lines.append("Responde con una de estas opciones:")
+    lines.append("- *NUEVO* para crear un ticket nuevo")
+    lines.append("- *ACTUALIZAR <ID>* para actualizar uno existente")
+    lines.append("*Tickets abiertos actuales:*")
+    for ticket in open_tickets:
+        lines.append(f"- {ticket.id} ({_summary_title(ticket.summary)})")
+    return "\n".join(lines)
+
+
+def _best_matching_open_ticket(message: str, open_tickets: list[TicketModel]) -> tuple[TicketModel | None, bool]:
     message_tokens = _tokenize_for_similarity(message)
-    if not message_tokens:
-        return None
+    message_reference = _extract_reference_from_text(message)
+
+    if not message_tokens and not message_reference:
+        return None, False
 
     best_ticket: TicketModel | None = None
-    best_score = 0
+    best_score = -1
+    best_reference_match = False
+
     for ticket in open_tickets:
-        ticket_tokens = _tokenize_for_similarity(ticket.summary)
-        if not ticket_tokens:
+        ticket_reference = _extract_reference_from_text(ticket.summary)
+        if message_reference and ticket_reference and message_reference != ticket_reference:
+            # Hard guard: different transaction/order references should not merge.
             continue
-        score = len(message_tokens & ticket_tokens)
+
+        ticket_tokens = _tokenize_for_similarity(ticket.summary)
+        score = len(message_tokens & ticket_tokens) if message_tokens and ticket_tokens else 0
+        reference_match = bool(message_reference and ticket_reference and message_reference == ticket_reference)
+        if reference_match:
+            score += 3
+
         if score > best_score:
             best_score = score
             best_ticket = ticket
+            best_reference_match = reference_match
 
-    if best_score == 0:
-        return None
-    return best_ticket
+    if best_ticket is None or best_score <= 0:
+        return None, False
+
+    confident = best_reference_match or best_score >= 2
+    return best_ticket, confident
 
 
 def _build_ticket_reply(action: str, ticket: TicketModel | None, reason: str | None = None) -> str:
@@ -1010,8 +1072,8 @@ async def run_ticket_agent(payload: AgentProcessIn) -> AgentProcessOut:
         )
 
     if decision.action == "create_ticket" and open_tickets and not _is_explicit_new_ticket_request(payload.message):
-        matched = _best_matching_open_ticket(payload.message, open_tickets)
-        if matched is not None:
+        matched, is_confident_match = _best_matching_open_ticket(payload.message, open_tickets)
+        if matched is not None and is_confident_match:
             merged = _merge_summaries(matched.summary, f"Actualizacion: {payload.message}")
             updated = update_open_ticket_summary(matched.id, matched.area, merged)
             if updated is not None:
@@ -1023,12 +1085,18 @@ async def run_ticket_agent(payload: AgentProcessIn) -> AgentProcessOut:
                     wa_link=_build_wa_link(updated.user_phone),
                     reply_message=_build_ticket_reply("update_ticket", updated),
                 )
+        if matched is not None and not is_confident_match:
+            return AgentProcessOut(
+                action="no_action",
+                reply_message=_build_update_disambiguation_reply(open_tickets, suggested=matched),
+            )
 
     if decision.action == "create_ticket" and decision.create_ticket is not None:
         return _start_intake_for_new_ticket(
             payload,
             decision.create_ticket.area,
             decision.create_ticket.summary,
+            decision.create_ticket.title,
         )
 
     if decision.action == "update_ticket" and decision.update_ticket is not None:
@@ -1051,6 +1119,7 @@ async def run_ticket_agent(payload: AgentProcessIn) -> AgentProcessOut:
             target_id,
             decision.update_ticket.area,
             merged,
+            title=_summary_title(merged),
         )
         if updated is None:
             return _start_intake_for_new_ticket(

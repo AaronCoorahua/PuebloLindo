@@ -66,7 +66,11 @@ async def close_ticket_endpoint(
         raise HTTPException(status_code=404, detail="Ticket not found")
 
     try:
-        result = close_ticket(ticket_id)
+        result = close_ticket(
+            ticket_id,
+            closed_by=payload.atendedor if payload is not None else None,
+            closed_message=payload.mensaje_cierre if payload is not None else None,
+        )
     except HTTPException:
         raise
     except Exception as exc:

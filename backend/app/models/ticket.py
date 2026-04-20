@@ -21,7 +21,10 @@ class TicketModel:
     user_phone: str
     status: str
     area: str
+    title: str
     summary: str
+    closed_by: str | None
+    closed_message: str | None
     created_at: datetime
     updated_at: datetime
     last_activity_at: datetime
@@ -40,7 +43,10 @@ class TicketModel:
             user_phone=row["user_phone"],
             status=row["status"],
             area=row.get("area") or "otros",
+            title=row.get("title") or "",
             summary=row.get("summary") or "",
+            closed_by=row.get("closed_by") if isinstance(row.get("closed_by"), str) else None,
+            closed_message=row.get("closed_message") if isinstance(row.get("closed_message"), str) else None,
             created_at=_parse_datetime(created_raw),
             updated_at=_parse_datetime(updated_raw),
             last_activity_at=_parse_datetime(last_activity_raw),

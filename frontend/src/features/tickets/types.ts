@@ -5,10 +5,13 @@ export type Ticket = {
   user_phone: string;
   status: TicketStatus;
   area: string;
+  title: string;
   summary: string;
   created_at: string;
   updated_at: string;
   last_activity_at: string;
+  closed_by?: string | null;
+  closed_message?: string | null;
   wa_link: string;
 };
 

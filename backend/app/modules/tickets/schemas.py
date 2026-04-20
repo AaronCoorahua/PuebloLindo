@@ -11,7 +11,10 @@ class TicketOut(BaseModel):
     user_phone: str
     status: Literal["open", "closed"]
     area: str
+    title: str
     summary: str
+    closed_by: str | None = None
+    closed_message: str | None = None
     created_at: datetime
     updated_at: datetime
     last_activity_at: datetime

@@ -5,14 +5,20 @@ create table if not exists public.tickets (
   user_phone text not null,
   status text not null check (status in ('open', 'closed')),
   area text not null default 'otros',
+  title text not null default '',
   summary text not null default '',
+  closed_by text null,
+  closed_message text null,
   created_at timestamptz not null,
   updated_at timestamptz not null,
   last_activity_at timestamptz not null
 );
 
 alter table public.tickets add column if not exists area text not null default 'otros';
+alter table public.tickets add column if not exists title text not null default '';
 alter table public.tickets add column if not exists summary text not null default '';
+alter table public.tickets add column if not exists closed_by text;
+alter table public.tickets add column if not exists closed_message text;
 alter table public.tickets add column if not exists last_activity_at timestamptz not null default now();
 
 create index if not exists idx_tickets_phone_status

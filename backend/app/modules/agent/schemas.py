@@ -31,6 +31,7 @@ class RecentMessageContext(BaseModel):
 
 class CreateTicketToolInput(BaseModel):
     area: Literal["soporte_tecnico", "pagos", "envios", "reclamos", "ventas", "otros"]
+    title: str = Field(min_length=5, max_length=120)
     summary: str = Field(min_length=10, max_length=800)
 
 

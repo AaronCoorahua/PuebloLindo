@@ -25,7 +25,10 @@ def _ticket_to_out(ticket: TicketModel) -> TicketOut:
         user_phone=ticket.user_phone,
         status=ticket.status,
         area=ticket.area,
+        title=ticket.title,
         summary=ticket.summary,
+        closed_by=ticket.closed_by,
+        closed_message=ticket.closed_message,
         created_at=ticket.created_at,
         updated_at=ticket.updated_at,
         last_activity_at=ticket.last_activity_at,
@@ -85,7 +88,7 @@ def get_ticket_by_id(ticket_id: UUID) -> TicketModel | None:
     return _get_ticket_by_id(ticket_id)
 
 
-def create_ticket(user_phone: str, area: str = "otros", summary: str = "") -> TicketModel:
+def create_ticket(user_phone: str, area: str = "otros", title: str = "", summary: str = "") -> TicketModel:
     now = _now_utc()
     ticket_id = uuid4()
 
@@ -96,6 +99,7 @@ def create_ticket(user_phone: str, area: str = "otros", summary: str = "") -> Ti
         "user_phone": user_phone,
         "status": "open",
         "area": area,
+        "title": title,
         "summary": summary,
         "created_at": now.isoformat(),
         "updated_at": now.isoformat(),
@@ -115,21 +119,23 @@ def get_or_create_open_ticket(user_phone: str) -> TicketModel:
     return create_ticket(user_phone=user_phone)
 
 
-def update_open_ticket_summary(ticket_id: UUID, area: str, summary: str) -> TicketModel | None:
+def update_open_ticket_summary(ticket_id: UUID, area: str, summary: str, title: str | None = None) -> TicketModel | None:
     now = _now_utc()
 
     client = get_supabase_client()
     table = settings.supabase_tickets_table
+    update_payload: dict[str, str] = {
+        "area": area,
+        "summary": summary,
+        "updated_at": now.isoformat(),
+        "last_activity_at": now.isoformat(),
+    }
+    if title is not None:
+        update_payload["title"] = title
+
     response = (
         client.table(table)
-        .update(
-            {
-                "area": area,
-                "summary": summary,
-                "updated_at": now.isoformat(),
-                "last_activity_at": now.isoformat(),
-            }
-        )
+        .update(update_payload)
         .eq("id", str(ticket_id))
         .eq("status", "open")
         .execute()
@@ -185,14 +191,23 @@ def get_ticket_detail(ticket_id: UUID) -> TicketDetailOut | None:
     return TicketDetailOut(ticket=_ticket_to_out(ticket))
 
 
-def close_ticket(ticket_id: UUID) -> CloseTicketOut | None:
+def close_ticket(ticket_id: UUID, closed_by: str | None = None, closed_message: str | None = None) -> CloseTicketOut | None:
     now = _now_utc()
 
     client = get_supabase_client()
     table = settings.supabase_tickets_table
+    update_payload: dict[str, str] = {
+        "status": "closed",
+        "updated_at": now.isoformat(),
+    }
+    if closed_by is not None:
+        update_payload["closed_by"] = closed_by
+    if closed_message is not None:
+        update_payload["closed_message"] = closed_message
+
     update_response = (
         client.table(table)
-        .update({"status": "closed", "updated_at": now.isoformat()})
+        .update(update_payload)
         .eq("id", str(ticket_id))
         .execute()
     )
