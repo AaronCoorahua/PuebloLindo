@@ -1,4 +1,4 @@
-# PuebloLindo
+# Pueblo Lindo
 
 Pueblo Lindo es un MVP de triage para Customer Success: recibe mensajes de WhatsApp, clasifica por area, crea/actualiza tickets y los muestra en un dashboard Kanban.
 
