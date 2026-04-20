@@ -16,7 +16,7 @@ def _now_utc() -> datetime:
 
 def _to_wa_link(phone: str) -> str:
     digits = "".join(ch for ch in phone if ch.isdigit())
-    return f"https://wa.me/{digits}"
+    return f"https://api.whatsapp.com/send?phone={digits}&text=Hola!"
 
 
 def _ticket_to_out(ticket: TicketModel) -> TicketOut:

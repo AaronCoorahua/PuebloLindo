@@ -172,6 +172,11 @@ def _shorten(text: str, max_len: int = 180) -> str:
     return f"{cleaned[: max_len - 3]}..."
 
 
+def _build_wa_link(phone: str) -> str:
+    digits = "".join(ch for ch in phone if ch.isdigit())
+    return f"https://api.whatsapp.com/send?phone={digits}&text=Hola!"
+
+
 def _extract_reference_slot(compact: str) -> str | None:
     patterns = (
         r"\b(?:pedido|orden|order|transaccion|pago|id|nro|numero|guia|tracking|publicacion)\s*[:#-]?\s*([a-z0-9-]{4,})\b",
@@ -388,7 +393,7 @@ def _create_ticket_from_intake(phone: str, open_tickets: list[TicketModel], sess
             ticket_id=open_tickets[0].id,
             area=open_tickets[0].area,
             summary=open_tickets[0].summary,
-            wa_link=f"https://wa.me/{''.join(ch for ch in phone if ch.isdigit())}",
+            wa_link=_build_wa_link(phone),
             reply_message=_build_close_ticket_options_message(open_tickets),
         )
 
@@ -399,7 +404,7 @@ def _create_ticket_from_intake(phone: str, open_tickets: list[TicketModel], sess
         ticket_id=ticket.id,
         area=ticket.area,
         summary=ticket.summary,
-        wa_link=f"https://wa.me/{''.join(ch for ch in ticket.user_phone if ch.isdigit())}",
+        wa_link=_build_wa_link(ticket.user_phone),
         reply_message=_build_ticket_reply("create_ticket", ticket),
     )
 
@@ -873,7 +878,7 @@ async def run_ticket_agent(payload: AgentProcessIn) -> AgentProcessOut:
             ticket_id=target.id,
             area=target.area,
             summary=target.summary,
-            wa_link=f"https://wa.me/{''.join(ch for ch in payload.phone if ch.isdigit())}",
+            wa_link=_build_wa_link(payload.phone),
             reply_message=reply,
         )
 
@@ -926,7 +931,7 @@ async def run_ticket_agent(payload: AgentProcessIn) -> AgentProcessOut:
                     ticket_id=updated.id,
                     area=updated.area,
                     summary=updated.summary,
-                    wa_link=f"https://wa.me/{''.join(ch for ch in updated.user_phone if ch.isdigit())}",
+                    wa_link=_build_wa_link(updated.user_phone),
                     reply_message=_build_ticket_reply("update_ticket", updated),
                 )
 
@@ -970,7 +975,7 @@ async def run_ticket_agent(payload: AgentProcessIn) -> AgentProcessOut:
             ticket_id=updated.id,
             area=updated.area,
             summary=updated.summary,
-            wa_link=f"https://wa.me/{''.join(ch for ch in updated.user_phone if ch.isdigit())}",
+            wa_link=_build_wa_link(updated.user_phone),
             reply_message=_build_ticket_reply("update_ticket", updated),
         )
 
