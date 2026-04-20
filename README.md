@@ -16,7 +16,7 @@ Pueblo Lindo es un MVP de triage para Customer Success: recibe mensajes de Whats
 Mensajes sugeridos:
 
 1. Hola, tengo un problema de soporte tecnico.
-2. En app/login no puedo entrar, pedido TK-40192, me sale error 401 al iniciar sesion.
+2. En app/login no puedo entrar sale error 500.
 3. SI
 
 Resultado esperado:
@@ -29,7 +29,7 @@ Resultado esperado:
 
 Mensajes sugeridos:
 
-1. No puedo pagar, me rechaza la tarjeta.
+1. Tengo un problema de pagos.No puedo pagar, me rechaza la tarjeta y sí tiene saldo.
 2. Transaccion TX-778812, metodo tarjeta visa, me sale error de pago.
 3. SI
 
@@ -57,7 +57,7 @@ Resultado esperado:
 
 Mensajes sugeridos:
 
-1. Tengo un reclamo formal por una compra.
+1. Tengo un problema de Reclamos. Tengo un reclamo formal por una compra.
 2. Pedido RQ-11223, el caso me afecta porque perdi una venta importante.
 3. SI
 
