@@ -5,10 +5,15 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
-from app.core.config import settings
-from app.modules.messages.schemas import SendMessageIn
-from app.modules.messages.service import send_outbound_message
-from app.modules.tickets.service import get_or_create_open_ticket
+from app.integrations.kapso_client import send_text_message
+from app.modules.agent.schemas import AgentProcessIn
+from app.modules.agent.service import build_waiting_message, run_ticket_agent
+from app.modules.messages.service import (
+    find_message_by_external_id,
+    save_message,
+    send_outbound_message_for_ticket,
+)
+from app.modules.tickets.service import get_or_create_open_ticket, get_ticket_by_id, list_open_tickets_for_phone
 from app.modules.webhooks.schemas import WebhookAckOut, WhatsAppWebhookIn
 
 logger = logging.getLogger(__name__)
@@ -153,20 +158,57 @@ async def process_whatsapp_webhook_raw(payload: Any, webhook_event: str | None =
 
 async def process_whatsapp_webhook(payload: WhatsAppWebhookIn) -> WebhookAckOut:
     external_message_id = _extract_external_message_id(payload)
-    user_phone = _extract_phone(payload)
-    _extract_content(payload)
+    already_processed = find_message_by_external_id(external_message_id)
+    if already_processed is not None:
+        return WebhookAckOut(
+            received=True,
+            event_id=external_message_id,
+            ticket_id=already_processed.ticket_id,
+            idempotent=True,
+        )
 
-    ticket = get_or_create_open_ticket(user_phone=user_phone)
+    user_phone = _extract_phone(payload)
+    content = _extract_content(payload)
+
+    try:
+        await send_text_message(phone=user_phone, message=build_waiting_message())
+    except Exception as exc:
+        logger.warning("waiting_message_failed event_id=%s err=%s", external_message_id, exc)
+
+    agent_out = await run_ticket_agent(
+        AgentProcessIn(
+            phone=user_phone,
+            message=content,
+            external_message_id=external_message_id,
+            event=payload.event,
+        )
+    )
+
+    if agent_out.ticket_id is None:
+        existing = list_open_tickets_for_phone(user_phone=user_phone, limit=1)
+        ticket = existing[0] if existing else get_or_create_open_ticket(user_phone=user_phone)
+    else:
+        ticket = get_ticket_by_id(agent_out.ticket_id) or get_or_create_open_ticket(user_phone=user_phone)
+
+    save_message(
+        ticket_id=ticket.id,
+        user_phone=user_phone,
+        sender="user",
+        content=content,
+        external_message_id=external_message_id,
+    )
+
+    await send_outbound_message_for_ticket(
+        phone=user_phone,
+        message=agent_out.reply_message,
+        ticket_id=ticket.id,
+    )
 
     logger.info(
         "webhook_received event_id=%s ticket_id=%s phone=%s",
         external_message_id,
         ticket.id,
         user_phone,
-    )
-
-    await send_outbound_message(
-        SendMessageIn(phone=user_phone, message=settings.auto_reply_text)
     )
 
     return WebhookAckOut(

@@ -14,13 +14,22 @@ def _now_utc() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _to_wa_link(phone: str) -> str:
+    digits = "".join(ch for ch in phone if ch.isdigit())
+    return f"https://wa.me/{digits}"
+
+
 def _ticket_to_out(ticket: TicketModel) -> TicketOut:
     return TicketOut(
         id=ticket.id,
         user_phone=ticket.user_phone,
         status=ticket.status,
+        area=ticket.area,
+        summary=ticket.summary,
         created_at=ticket.created_at,
         updated_at=ticket.updated_at,
+        last_activity_at=ticket.last_activity_at,
+        wa_link=_to_wa_link(ticket.user_phone),
     )
 
 
@@ -29,8 +38,11 @@ def _ticket_from_dict(row: dict[str, Any]) -> TicketModel:
         id=UUID(row["id"]),
         user_phone=row["user_phone"],
         status=row["status"],
+        area=row.get("area") or "otros",
+        summary=row.get("summary") or "",
         created_at=datetime.fromisoformat(row["created_at"]),
         updated_at=datetime.fromisoformat(row["updated_at"]),
+        last_activity_at=datetime.fromisoformat(row.get("last_activity_at") or row["updated_at"]),
     )
 
 
@@ -52,6 +64,22 @@ def _get_ticket_by_phone_with_status(user_phone: str, status: str) -> TicketMode
     return _ticket_from_dict(data[0])
 
 
+def list_open_tickets_for_phone(user_phone: str, limit: int = 20) -> list[TicketModel]:
+    client = get_supabase_client()
+    table = settings.supabase_tickets_table
+    response = (
+        client.table(table)
+        .select("*")
+        .eq("user_phone", user_phone)
+        .eq("status", "open")
+        .order("last_activity_at", desc=True)
+        .limit(limit)
+        .execute()
+    )
+    rows = response.data or []
+    return [_ticket_from_dict(row) for row in rows]
+
+
 def _get_ticket_by_id(ticket_id: UUID) -> TicketModel | None:
     client = get_supabase_client()
     table = settings.supabase_tickets_table
@@ -62,7 +90,11 @@ def _get_ticket_by_id(ticket_id: UUID) -> TicketModel | None:
     return _ticket_from_dict(data[0])
 
 
-def create_ticket(user_phone: str) -> TicketModel:
+def get_ticket_by_id(ticket_id: UUID) -> TicketModel | None:
+    return _get_ticket_by_id(ticket_id)
+
+
+def create_ticket(user_phone: str, area: str = "otros", summary: str = "") -> TicketModel:
     now = _now_utc()
     ticket_id = uuid4()
 
@@ -72,8 +104,11 @@ def create_ticket(user_phone: str) -> TicketModel:
         "id": str(ticket_id),
         "user_phone": user_phone,
         "status": "open",
+        "area": area,
+        "summary": summary,
         "created_at": now.isoformat(),
         "updated_at": now.isoformat(),
+        "last_activity_at": now.isoformat(),
     }
     response = client.table(table).insert(payload).execute()
     data = response.data or []
@@ -87,6 +122,53 @@ def get_or_create_open_ticket(user_phone: str) -> TicketModel:
     if existing is not None:
         return existing
     return create_ticket(user_phone=user_phone)
+
+
+def update_open_ticket_summary(ticket_id: UUID, area: str, summary: str) -> TicketModel | None:
+    now = _now_utc()
+
+    client = get_supabase_client()
+    table = settings.supabase_tickets_table
+    response = (
+        client.table(table)
+        .update(
+            {
+                "area": area,
+                "summary": summary,
+                "updated_at": now.isoformat(),
+                "last_activity_at": now.isoformat(),
+            }
+        )
+        .eq("id", str(ticket_id))
+        .eq("status", "open")
+        .execute()
+    )
+    data = response.data or []
+    if not data:
+        return None
+    return _ticket_from_dict(data[0])
+
+
+def touch_open_ticket_activity(ticket_id: UUID) -> TicketModel | None:
+    now = _now_utc()
+    client = get_supabase_client()
+    table = settings.supabase_tickets_table
+    response = (
+        client.table(table)
+        .update(
+            {
+                "updated_at": now.isoformat(),
+                "last_activity_at": now.isoformat(),
+            }
+        )
+        .eq("id", str(ticket_id))
+        .eq("status", "open")
+        .execute()
+    )
+    data = response.data or []
+    if not data:
+        return None
+    return _ticket_from_dict(data[0])
 
 
 def list_tickets(status: str | None, limit: int, offset: int) -> TicketListOut:

@@ -10,6 +10,7 @@ class Settings(BaseSettings):
     supabase_key: str = ""
     supabase_schema: str = "public"
     supabase_tickets_table: str = "tickets"
+    supabase_messages_table: str = "messages"
 
     kapso_base_url: str = "https://api.kapso.ai/meta/whatsapp/v24.0"
     kapso_api_key: str = ""
