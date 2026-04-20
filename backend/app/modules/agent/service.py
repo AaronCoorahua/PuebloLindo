@@ -56,6 +56,95 @@ def build_waiting_message() -> str:
     return WAITING_MESSAGE_GENERIC
 
 
+def _normalize_text(text: str) -> str:
+    lowered = text.lower()
+    return re.sub(r"[^a-z0-9\s]", " ", lowered)
+
+
+def _is_greeting_only(message: str) -> bool:
+    normalized = _normalize_text(message)
+    compact = " ".join(normalized.split())
+    if not compact:
+        return False
+
+    greeting_phrases = {
+        "hola",
+        "holi",
+        "buenas",
+        "buenos dias",
+        "buenas tardes",
+        "buenas noches",
+        "hello",
+        "hi",
+    }
+    if compact in greeting_phrases:
+        return True
+
+    words = compact.split()
+    if len(words) <= 3 and any(phrase in compact for phrase in greeting_phrases):
+        return True
+
+    return False
+
+
+def _is_out_of_scope_consultation(message: str) -> bool:
+    normalized = _normalize_text(message)
+    compact = " ".join(normalized.split())
+    if not compact:
+        return False
+
+    problem_signals = (
+        "problema",
+        "error",
+        "falla",
+        "falla",
+        "reclamo",
+        "no puedo",
+        "no funciona",
+        "ayuda",
+        "demora",
+        "pago",
+        "envio",
+        "pedido",
+        "pedido",
+        "devolucion",
+    )
+    if any(signal in compact for signal in problem_signals):
+        return False
+
+    consultation_signals = (
+        "precio",
+        "precios",
+        "catalogo",
+        "producto",
+        "productos",
+        "artesano",
+        "artesanos",
+        "comprar",
+        "compra",
+        "vende",
+        "vender",
+        "marketplace",
+        "informacion",
+        "información",
+        "consulta",
+        "quienes son",
+        "qué es",
+        "que es",
+    )
+    has_question_shape = "?" in message or compact.startswith(("como", "cómo", "que", "qué", "cual", "cuál"))
+    return has_question_shape and any(signal in compact for signal in consultation_signals)
+
+
+def _build_out_of_scope_reply() -> str:
+    return (
+        "Gracias por escribirnos. Soy Pueblo Agent y estoy diseñado para procesar "
+        "problemas o incidencias de PuebloLindo para derivarlos con el equipo correcto. "
+        "Si tienes algun inconveniente con pagos, envios, pedidos o tu cuenta, cuentamelo "
+        "y te ayudo a canalizarlo."
+    )
+
+
 def _ticket_context(ticket: TicketModel) -> OpenTicketContext:
     return OpenTicketContext(
         id=ticket.id,
@@ -217,7 +306,7 @@ def _best_matching_open_ticket(message: str, open_tickets: list[TicketModel]) ->
 
 def _build_ticket_reply(action: str, ticket: TicketModel | None, reason: str | None = None) -> str:
     if ticket is None:
-        return "Recibimos tu mensaje. Un asesor revisara tu caso pronto."
+        return "Hola, soy Pueblo Agent de Pueblo Lindo. ¿En que puedo ayudarte hoy?"
 
     wa_link = f"https://wa.me/{''.join(ch for ch in ticket.user_phone if ch.isdigit())}"
     if action == "create_ticket":
@@ -230,13 +319,26 @@ def _build_ticket_reply(action: str, ticket: TicketModel | None, reason: str | N
             f"Ticket actualizado: {ticket.id}. Area: {ticket.area}. "
             f"Resumen actual: {ticket.summary}. Contacto rapido: {wa_link}"
         )
-    reason_text = f" Motivo: {reason}" if reason else ""
-    return f"Recibimos tu mensaje y seguimos atentos.{reason_text}"
+    if reason:
+        return "Gracias por escribirnos. ¿Puedes contarme un poco mas de tu caso para ayudarte mejor?"
+    return "Gracias por escribirnos. ¿En que puedo ayudarte hoy?"
 
 
 async def run_ticket_agent(payload: AgentProcessIn) -> AgentProcessOut:
     open_tickets = list_open_tickets_for_phone(payload.phone, limit=MAX_OPEN_TICKETS)
     recent_messages = list_recent_messages_by_phone(payload.phone, limit=RECENT_MESSAGES_LIMIT)
+
+    if _is_greeting_only(payload.message):
+        return AgentProcessOut(
+            action="no_action",
+            reply_message="Hola, soy Pueblo Agent de Pueblo Lindo. ¿En que puedo ayudarte hoy?",
+        )
+
+    if _is_out_of_scope_consultation(payload.message):
+        return AgentProcessOut(
+            action="no_action",
+            reply_message=_build_out_of_scope_reply(),
+        )
 
     close_choice = _extract_close_choice(payload.message, len(open_tickets))
     if close_choice is not None and open_tickets:

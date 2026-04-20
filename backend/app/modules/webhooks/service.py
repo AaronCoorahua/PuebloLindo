@@ -7,7 +7,7 @@ from uuid import uuid4
 
 from app.integrations.kapso_client import send_text_message
 from app.modules.agent.schemas import AgentProcessIn
-from app.modules.agent.service import build_waiting_message, run_ticket_agent
+from app.modules.agent.service import run_ticket_agent
 from app.modules.messages.service import (
     find_message_by_external_id,
     save_message,
@@ -170,11 +170,6 @@ async def process_whatsapp_webhook(payload: WhatsAppWebhookIn) -> WebhookAckOut:
     user_phone = _extract_phone(payload)
     content = _extract_content(payload)
 
-    try:
-        await send_text_message(phone=user_phone, message=build_waiting_message())
-    except Exception as exc:
-        logger.warning("waiting_message_failed event_id=%s err=%s", external_message_id, exc)
-
     agent_out = await run_ticket_agent(
         AgentProcessIn(
             phone=user_phone,
@@ -183,6 +178,21 @@ async def process_whatsapp_webhook(payload: WhatsAppWebhookIn) -> WebhookAckOut:
             event=payload.event,
         )
     )
+
+    # For greeting/small-talk events we can reply without forcing ticket creation.
+    if agent_out.action == "no_action" and agent_out.ticket_id is None:
+        await send_text_message(phone=user_phone, message=agent_out.reply_message)
+        logger.info(
+            "webhook_received_no_ticket event_id=%s phone=%s",
+            external_message_id,
+            user_phone,
+        )
+        return WebhookAckOut(
+            received=True,
+            event_id=external_message_id,
+            ticket_id=None,
+            idempotent=False,
+        )
 
     if agent_out.ticket_id is None:
         existing = list_open_tickets_for_phone(user_phone=user_phone, limit=1)
