@@ -549,8 +549,17 @@ def _rehydrate_intake_from_recent_messages(recent_messages: list[MessageModel]) 
     prompt_compact = " ".join(_normalize_text(intake_prompt.content).split())
     session.awaiting_confirmation = "confirmacion de ticket" in prompt_compact
 
+    # Limit reconstruction to the current conversational block.
+    # Otherwise, older closed/resolved tickets can leak slot values into a new intake.
+    pre_intake_start_index = 0
+    for idx in range(last_prompt_index - 1, -1, -1):
+        message = recent_messages[idx]
+        if message.sender == "agent" and _is_ticket_resolution_message(message.content):
+            pre_intake_start_index = idx + 1
+            break
+
     # Reconstruct slot values from user context that existed before the intake prompt.
-    for message in recent_messages[:last_prompt_index]:
+    for message in recent_messages[pre_intake_start_index:last_prompt_index]:
         if message.sender != "user":
             continue
         if not session.summary_seed.strip():
@@ -580,7 +589,7 @@ def _rehydrate_intake_from_recent_messages(recent_messages: list[MessageModel]) 
         _merge_session_slot_values(session, message.content)
 
     if not session.summary_seed.strip():
-        for message in reversed(recent_messages[:last_prompt_index]):
+        for message in reversed(recent_messages[pre_intake_start_index:last_prompt_index]):
             if message.sender == "user":
                 session.summary_seed = f"Cliente reporta: {message.content}"
                 break
