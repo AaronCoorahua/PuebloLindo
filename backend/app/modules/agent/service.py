@@ -45,7 +45,9 @@ Reglas obligatorias:
 - Solo puedes actualizar tickets abiertos.
 - Si hay multiples tickets abiertos, elige el ticket con mayor relacion semantica.
 - Si no hay relacion clara y el mensaje describe un incidente nuevo del marketplace, crea ticket nuevo.
-- Si el mensaje NO es una incidencia del marketplace (ej: programacion, tareas, curiosidades, consultas generales), usa no_action.
+- Si el mensaje NO es una incidencia del marketplace (ej: programacion, salud, familia, finanzas personales, tareas, curiosidades, consultas generales), usa no_action.
+- Si el usuario menciona "marketplace" pero pide ayuda no operativa (ej: escribir codigo, resolver tareas, consultas personales), usa no_action.
+- Solo crea/actualiza ticket si hay evidencia explicita de problema operativo del marketplace que pueda derivarse a un area.
 - Usa solo estas areas y su alcance:
     - soporte_tecnico: errores de plataforma, login, cuenta, bugs, fallas tecnicas.
     - pagos: cobros, pagos rechazados, reembolsos, facturacion.
@@ -107,45 +109,104 @@ def _is_out_of_scope_consultation(message: str) -> bool:
     if not compact:
         return False
 
-    non_marketplace_tech_signals = (
+    marketplace_scope_signals = (
+        "marketplace",
+        "plataforma",
+        "app",
+        "web",
+        "pedido",
+        "envio",
+        "entrega",
+        "tracking",
+        "pago",
+        "cobro",
+        "reembolso",
+        "factura",
+        "compra",
+        "venta",
+        "carrito",
+        "checkout",
+        "cuenta",
+        "login",
+        "usuario",
+        "artesano",
+        "comprador",
+        "reclamo",
+        "devolucion",
+        "ticket",
+    )
+    has_marketplace_scope = any(signal in compact for signal in marketplace_scope_signals)
+
+    marketplace_incident_signals = (
+        "no puedo",
+        "no funciona",
+        "error",
+        "falla",
+        "falla",
+        "demora",
+        "rechaz",
+        "duplic",
+        "bloque",
+        "cancel",
+        "devolu",
+        "reembolso",
+        "reclamo",
+        "problema",
+        "incidencia",
+        "ayuda",
+    )
+    has_marketplace_incident = has_marketplace_scope and any(
+        signal in compact for signal in marketplace_incident_signals
+    )
+
+    coding_help_signals = (
         "fibonacci",
+        "fibon",
         "python",
         "javascript",
         "java",
         "codigo",
+        "codig",
+        "programacion",
         "programar",
+        "program",
         "algoritmo",
-        "api",
+        "algorit",
+        "ejemplo",
+        "dame",
+        "ensename",
+        "ense",
         "sql",
         "html",
         "css",
         "debug",
     )
-    if any(signal in compact for signal in non_marketplace_tech_signals):
+    if any(signal in compact for signal in coding_help_signals):
         return True
 
-    marketplace_problem_signals = (
-        "problema",
-        "error",
-        "falla",
-        "reclamo",
-        "no puedo",
-        "no funciona",
-        "ayuda",
-        "demora",
-        "pago",
-        "reembolso",
-        "envio",
-        "pedido",
-        "devolucion",
-        "cuenta",
-        "login",
-        "artesano",
-        "comprador",
-        "compra",
-        "venta",
+    personal_or_non_operational_signals = (
+        "salud",
+        "enfermedad",
+        "medico",
+        "familia",
+        "pareja",
+        "novia",
+        "novio",
+        "hijo",
+        "hija",
+        "depresion",
+        "ansiedad",
+        "deuda",
+        "finanzas personales",
+        "inversion",
+        "impuestos personales",
+        "legal",
+        "abogado",
     )
-    if any(signal in compact for signal in marketplace_problem_signals):
+    if any(signal in compact for signal in personal_or_non_operational_signals) and not has_marketplace_scope:
+        return True
+
+    if has_marketplace_incident:
         return False
 
     general_consultation_signals = (
@@ -168,12 +229,18 @@ def _is_out_of_scope_consultation(message: str) -> bool:
         "como funciona",
     )
     has_question_shape = "?" in message or compact.startswith(("como", "que", "cual", "donde", "quien"))
-    return has_question_shape and any(signal in compact for signal in general_consultation_signals)
+
+    if has_question_shape and any(signal in compact for signal in general_consultation_signals):
+        return True
+
+    # Safety-first: if there is no clear marketplace incident, treat it as out-of-scope.
+    return not has_marketplace_incident
 
 
 def _build_out_of_scope_reply() -> str:
     return (
-        "Gracias por escribirnos. Soy Pueblo Agent y solo gestiono incidencias de PuebloLindo "
+        "Gracias por escribirnos. No puedo ayudar con esa consulta. "
+        "Soy Pueblo Agent y solo gestiono incidencias operativas de PuebloLindo "
         "para derivarlas al area correcta. "
         "Si tienes un problema con pagos, envios, pedidos, cuenta o reclamos del marketplace, "
         "cuentamelo y te ayudo de inmediato."
@@ -342,8 +409,19 @@ def _best_matching_open_ticket(message: str, open_tickets: list[TicketModel]) ->
 
 
 def _build_ticket_reply(action: str, ticket: TicketModel | None, reason: str | None = None) -> str:
+    if action == "no_action":
+        normalized_reason = _normalize_text(reason or "")
+        if any(signal in normalized_reason for signal in ("saludo", "greeting", "hola")):
+            return "Hola, soy Pueblo Agent de Pueblo Lindo. ¿En que puedo ayudarte hoy?"
+        if any(
+            signal in normalized_reason
+            for signal in ("fuera", "alcance", "consulta", "program", "incidencia", "marketplace")
+        ):
+            return _build_out_of_scope_reply()
+        return "Gracias por escribirnos. ¿Puedes contarme un poco mas de tu caso para ayudarte mejor?"
+
     if ticket is None:
-        return "Hola, soy Pueblo Agent de Pueblo Lindo. ¿En que puedo ayudarte hoy?"
+        return "Gracias por escribirnos. ¿En que puedo ayudarte hoy?"
 
     if action == "create_ticket":
         return (
@@ -359,8 +437,6 @@ def _build_ticket_reply(action: str, ticket: TicketModel | None, reason: str | N
             f"- *Area:* {ticket.area}\n"
             f"- *Resumen:* {ticket.summary}"
         )
-    if reason:
-        return "Gracias por escribirnos. ¿Puedes contarme un poco mas de tu caso para ayudarte mejor?"
     return "Gracias por escribirnos. ¿En que puedo ayudarte hoy?"
 
 
@@ -414,6 +490,12 @@ async def run_ticket_agent(payload: AgentProcessIn) -> AgentProcessOut:
         return AgentProcessOut(
             action="no_action",
             reply_message=LLM_UNAVAILABLE_MESSAGE,
+        )
+
+    if decision.action in {"create_ticket", "update_ticket"} and _is_out_of_scope_consultation(payload.message):
+        return AgentProcessOut(
+            action="no_action",
+            reply_message=_build_out_of_scope_reply(),
         )
 
     if decision.action == "create_ticket" and open_tickets and not _is_explicit_new_ticket_request(payload.message):
