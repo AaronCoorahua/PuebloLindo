@@ -9,23 +9,23 @@ Pueblo Lindo es un MVP de triage para Customer Success: recibe mensajes de Whats
 - Link directo de prueba por WhatsApp: https://api.whatsapp.com/send?phone=12013315463&text=Hola!
 - Nota sobre Gemini: si te aparece un mensaje indicando que Gemini no responde, normalmente es por limites de free tier. Puedes escribirme y cambio la API key rapidamente para continuar la prueba.
 
-## 4 flujos sugeridos para probar por WhatsApp
+## 6 flujos sugeridos (1 por area) para probar por WhatsApp
 
-### Flujo 1 - Venta no reflejada (intake + confirmacion)
+### Flujo 1 - Soporte tecnico (error de login)
 
 Mensajes sugeridos:
 
-1. Hola, tengo un problema con una venta.
-2. Soy comprador, pedido A12345, me cobraron y no aparece la venta.
+1. Hola, tengo un problema de soporte tecnico.
+2. En app/login no puedo entrar, pedido TK-40192, me sale error 401 al iniciar sesion.
 3. SI
 
 Resultado esperado:
 
-- El agente primero pide datos faltantes.
-- Cuando supera umbral, pide confirmacion.
+- El caso se enruta a soporte_tecnico.
+- El agente captura detalle + canal (app/login) y usa contexto de error.
 - Solo crea ticket despues de responder SI.
 
-### Flujo 2 - Pago rechazado
+### Flujo 2 - Pagos (pago rechazado)
 
 Mensajes sugeridos:
 
@@ -36,10 +36,10 @@ Mensajes sugeridos:
 Resultado esperado:
 
 - El caso se enruta a pagos.
-- Se pide/usa referencia de transaccion.
+- Se usa referencia de transaccion y metodo de pago.
 - Se confirma antes de crear ticket.
 
-### Flujo 3 - Envio demorado
+### Flujo 3 - Envios (demora de entrega)
 
 Mensajes sugeridos:
 
@@ -53,19 +53,47 @@ Resultado esperado:
 - El agente incluye referencia y contexto de envio.
 - Crea ticket solo tras confirmacion.
 
-### Flujo 4 - Cancelar antes de crear ticket
+### Flujo 4 - Reclamos (mala experiencia)
 
 Mensajes sugeridos:
 
-1. Tengo un reclamo por una compra.
-2. Es urgente, pedido RQ-11223.
-3. cancelar
+1. Tengo un reclamo formal por una compra.
+2. Pedido RQ-11223, el caso me afecta porque perdi una venta importante.
+3. SI
 
 Resultado esperado:
 
-- El agente limpia la sesion de intake.
-- No se crea ticket.
-- Se puede reiniciar el flujo luego con un nuevo mensaje.
+- El caso se enruta a reclamos.
+- El agente captura detalle y referencia, y registra impacto.
+- Solicita confirmacion antes de crear el ticket.
+
+### Flujo 5 - Ventas (problema comercial en marketplace)
+
+Mensajes sugeridos:
+
+1. Tengo un problema con una venta en el marketplace.
+2. Soy comprador, pedido VN-45001, no aparece la venta en mi historial.
+3. SI
+
+Resultado esperado:
+
+- El caso se enruta a ventas.
+- El agente usa referencia + rol de usuario (comprador/artesano).
+- El ticket se crea solo luego de confirmacion.
+
+### Flujo 6 - Otros (incidencia operativa no clasica)
+
+Mensajes sugeridos:
+
+1. Tengo una incidencia del marketplace que no encaja en pagos/envios/ventas.
+2. Caso OT-99017: no se refleja correctamente la comision de plataforma en mi resumen semanal.
+3. SI
+
+Resultado esperado:
+
+- El caso se enruta a otros.
+- El agente pide/captura al menos detalle y referencia del caso.
+- Se confirma y luego se crea ticket.
 
 ## Arquitectura
 

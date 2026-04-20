@@ -787,6 +787,65 @@ def _build_out_of_scope_reply() -> str:
     )
 
 
+def _reason_points_to_out_of_scope(reason: str) -> bool:
+    normalized = _normalize_text(reason)
+    compact = " ".join(normalized.split())
+    if not compact:
+        return False
+
+    out_of_scope_signals = (
+        "fuera de alcance",
+        "out of scope",
+        "consulta general",
+        "no relacionada",
+        "program",
+        "tarea",
+        "curiosidad",
+        "personal",
+        "salud",
+        "familia",
+        "finanzas personales",
+    )
+    return any(signal in compact for signal in out_of_scope_signals)
+
+
+def _infer_area_from_message(message: str) -> str | None:
+    compact = " ".join(_normalize_text(message).split())
+    if not compact:
+        return None
+
+    area_signals: tuple[tuple[str, tuple[str, ...]], ...] = (
+        (
+            "pagos",
+            ("pago", "pagos", "cobro", "cobros", "tarjeta", "reembolso", "factura", "transaccion"),
+        ),
+        (
+            "envios",
+            ("envio", "envios", "entrega", "tracking", "guia", "courier", "direccion"),
+        ),
+        (
+            "soporte_tecnico",
+            ("soporte", "tecnico", "error", "falla", "bug", "login", "cuenta", "app", "web", "checkout"),
+        ),
+        (
+            "reclamos",
+            ("reclamo", "queja", "disconformidad", "mala experiencia", "disputa"),
+        ),
+        (
+            "ventas",
+            ("venta", "ventas", "comprador", "artesano", "vendedor", "publicacion", "catalogo"),
+        ),
+    )
+
+    for area, signals in area_signals:
+        if any(signal in compact for signal in signals):
+            return area
+
+    if any(signal in compact for signal in ("problema", "incidencia", "no puedo", "no funciona")):
+        return "otros"
+    return None
+
+
 def _ticket_context(ticket: TicketModel) -> OpenTicketContext:
     return OpenTicketContext(
         id=ticket.id,
@@ -999,10 +1058,7 @@ def _build_ticket_reply(action: str, ticket: TicketModel | None, reason: str | N
         normalized_reason = _normalize_text(reason or "")
         if any(signal in normalized_reason for signal in ("saludo", "greeting", "hola")):
             return "Hola, soy Pueblo Agent de Pueblo Lindo. ¿En que puedo ayudarte hoy?"
-        if any(
-            signal in normalized_reason
-            for signal in ("fuera", "alcance", "consulta", "program", "incidencia", "marketplace")
-        ):
+        if _reason_points_to_out_of_scope(reason or ""):
             return _build_out_of_scope_reply()
         return "Gracias por escribirnos. ¿Puedes contarme un poco mas de tu caso para ayudarte mejor?"
 
@@ -1157,6 +1213,15 @@ async def run_ticket_agent(payload: AgentProcessIn) -> AgentProcessOut:
         )
 
     no_action_reason = decision.no_action.reason if decision.no_action else None
+    if not _is_out_of_scope_consultation(payload.message):
+        inferred_area = _infer_area_from_message(payload.message)
+        if inferred_area is not None:
+            return _start_intake_for_new_ticket(
+                payload,
+                inferred_area,
+                f"Cliente reporta: {payload.message}",
+            )
+
     return AgentProcessOut(
         action="no_action",
         reply_message=_build_ticket_reply("no_action", None, no_action_reason),
